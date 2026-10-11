@@ -169,7 +169,7 @@ DESTRUCTIBLE_CONTACT_INFLIGHT_LIMIT = 64
 BOT_WATER_ESCAPE_DEEPEN_EPSILON = 0.10
 CRITICAL_REPAIR_NETWORK_SECONDS = 1.0
 # tankmen.xml commander_expert.delay in the pinned #1513 client.
-EXPERT_DEVICE_DELAY_SECONDS = 4.0
+EXPERT_DEVICE_DELAY_SECONDS = 1.0
 # A player can sweep the reticle or switch shells many times in one round.
 # Keep the useful presentation edges while preventing diagnostics from
 # becoming an unbounded render-thread log source.
