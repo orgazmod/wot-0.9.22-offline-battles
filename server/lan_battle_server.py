@@ -83,7 +83,7 @@ TICK_HZ = 30.0
 # #1513 ingests observations and damage immediately, but only needs one
 # full-team tactical order synthesis per second.
 BOT_PLANNER_INTERVAL_TICKS = max(1, int(round(TICK_HZ)))
-REPLICA_SNAPSHOT_HZ = 15.0
+REPLICA_SNAPSHOT_HZ = 30.0
 REPLICA_SNAPSHOT_TICKS = max(
     1, int(round(TICK_HZ / REPLICA_SNAPSHOT_HZ)))
 # A lineage section is recorded as delivered when its payload reaches the

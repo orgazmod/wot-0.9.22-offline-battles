@@ -81,7 +81,7 @@ from gui.mods.offline_lan_0922 import (
 FRAME_SECONDS = 0.0
 # Runtime profiling is observational. Its process-time clock never becomes
 # simulation time and never feeds the fixed-control or A* schedulers.
-PERFORMANCE_DIAGNOSTICS = True
+PERFORMANCE_DIAGNOSTICS = False
 WORKER_NATIVE_PROBE_SECONDS = 5.0
 # Keep enough timing evidence for user-submitted logs without displacing
 # lifecycle failures and tracebacks with a twelve-line report every five

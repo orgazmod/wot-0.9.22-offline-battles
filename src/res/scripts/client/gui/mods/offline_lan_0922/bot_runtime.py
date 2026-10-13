@@ -2160,6 +2160,7 @@ class BotRuntime(object):
         self._pending_manifest_authority_id = None
         self._descriptor_pairs = {}
         self._descriptors = {}
+        self._bot_names = {}
         self._gun_yaw_limits = {}
         self._gun_states = {}
         self._ammo_states = {}
@@ -2953,6 +2954,9 @@ class BotRuntime(object):
             existing = equipment_mechanics.restore_equipment_states(
                 snapshots, contracts=contracts, now=self._equipment_now)
             self._equipment_states[bot_id] = existing
+        name = self._bot_names.get(bot_id) or 'bot%d' % bot_id
+        for state in existing:
+            state.bot_name = name
         states = self._equipment_states.get(bot_id, ())
         self._equipment_wire_cache.pop(bot_id, None)
         self._equipment_wire_exposed_in_update.discard(bot_id)
@@ -3318,6 +3322,7 @@ class BotRuntime(object):
             self._pending_manifest_authority_id = None
             self._descriptor_pairs = {}
             self._descriptors = {}
+            self._bot_names = {}
             self._gun_yaw_limits = {}
             self._gun_states = {}
             self._ammo_states = {}
@@ -3515,6 +3520,7 @@ class BotRuntime(object):
             if self.navigator is not None:
                 self.adapter.navigation_target = self._navigation_target
         for raw, bot_id, vehicle_name, descriptor_pair in resolved_manifest:
+            self._bot_names[bot_id] = str(raw.get('name') or 'bot%d' % bot_id)
             raw_siege_state = raw.get(
                 'siege_state', siege_mechanics.DISABLED)
             raw_wire_time = raw.get('siege_time_left_ms', 0)
@@ -13289,6 +13295,28 @@ class BotRuntime(object):
                 target.get('kind') if target is not None else None)
             state['target_id'] = (
                 target.get('network_id') if target is not None else None)
+            try:
+                from gui.mods.offline_lan_0922 import equipment_mechanics as _EQ_freeze
+                if _EQ_freeze._bot_freeze_enabled():
+                    target = None
+                    command = dict(command)
+                    command['move_position'] = position
+                    command['route_anchor'] = position
+                    command['target_id'] = None
+                    command['target_kind'] = None
+                    command['fire_allowed'] = False
+                    command['movement_intent'] = False
+                    command['throttle'] = 0.0
+                    command['yaw'] = state.get('yaw', 0.0)
+                    command['turn'] = 0.0
+                    command['desired_yaw'] = state.get('yaw', 0.0)
+                    command['target_yaw'] = state.get('yaw', 0.0)
+                    command['heading'] = state.get('yaw', 0.0)
+                    command['steering'] = 0.0
+                    state['target_kind'] = None
+                    state['target_id'] = None
+            except Exception:
+                pass
             siege_motion_locked = bool(
                 self._update_bot_siege_intent(
                     state, command, target, step) or

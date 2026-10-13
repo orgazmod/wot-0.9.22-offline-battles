@@ -109,400 +109,400 @@ def _sync_crashed_track(vehicle, before, after):
 
 
 class _SynthDeviceExtra(object):
-	'''Stand-in for a vehicle-type extra, carrying the one field the crit loop
-	reads off it.'''
-	__slots__ = ('name',)
+    '''Stand-in for a vehicle-type extra, carrying the one field the crit loop
+    reads off it.'''
+    __slots__ = ('name',)
 
-	def __init__(self, name):
-		self.name = name
+    def __init__(self, name):
+        self.name = name
 
 
 class _SynthMaterial(object):
-	'''Stand-in for the MaterialInfo of an INTERIOR device hit.
+    '''Stand-in for the MaterialInfo of an INTERIOR device hit.
 
-	0.8.2 ships no collision geometry for the interior: all 1975 collision meshes
-	in this client carry only armor_N, gun, the two tracks, surveyingDevice and
-	gunBreech (the interior kinds survive on two leftover models and no crewman
-	kind exists at all). WG resolved those hits server-side against a model that
-	was never distributed, so the crit loop is handed one of these instead. The
-	values are the era common/vehicle.xml entry for a device material: armor 0,
-	damageKind 1 (device), vehicleDamageFactor 0 (the hull damage is already
-	accounted for by the penetrating shot) and the real hit chances, which is
-	what device_damage.saving_throw reads.'''
-	__slots__ = ('extra', 'armor', 'damageKind', 'vehicleDamageFactor',
-	             'chanceToHitByProjectile', 'chanceToHitByExplosion')
+    0.8.2 ships no collision geometry for the interior: all 1975 collision meshes
+    in this client carry only armor_N, gun, the two tracks, surveyingDevice and
+    gunBreech (the interior kinds survive on two leftover models and no crewman
+    kind exists at all). WG resolved those hits server-side against a model that
+    was never distributed, so the crit loop is handed one of these instead. The
+    values are the era common/vehicle.xml entry for a device material: armor 0,
+    damageKind 1 (device), vehicleDamageFactor 0 (the hull damage is already
+    accounted for by the penetrating shot) and the real hit chances, which is
+    what device_damage.saving_throw reads.'''
+    __slots__ = ('extra', 'armor', 'damageKind', 'vehicleDamageFactor',
+                 'chanceToHitByProjectile', 'chanceToHitByExplosion')
 
-	def __init__(self, name):
-		from gui.mods.offline_lan_0922 import device_damage as _dd
-		self.extra = _SynthDeviceExtra(name)
-		self.armor = 0
-		self.damageKind = 1
-		self.vehicleDamageFactor = 0.0
-		self.chanceToHitByProjectile = _dd.fallback_chance(name, False)
-		# Crew is the one group where the two differ: 0.33 by shell, 0.15 by blast.
-		self.chanceToHitByExplosion = _dd.fallback_chance(name, True)
+    def __init__(self, name):
+        from gui.mods.offline_lan_0922 import device_damage as _dd
+        self.extra = _SynthDeviceExtra(name)
+        self.armor = 0
+        self.damageKind = 1
+        self.vehicleDamageFactor = 0.0
+        self.chanceToHitByProjectile = _dd.fallback_chance(name, False)
+        # Crew is the one group where the two differ: 0.33 by shell, 0.15 by blast.
+        self.chanceToHitByExplosion = _dd.fallback_chance(name, True)
 
 
 def _offh_interior_zone(target_mock, all_hits, start_pos, end_pos=None, td=None):
-	'''Which interior compartment the shell entered: 'turret', 'hullFront',
-	'hullRear' or 'hullSide'.
+    '''Which interior compartment the shell entered: 'turret', 'hullFront',
+    'hullRear' or 'hullSide'.
 
-	The turret case is read straight off the component the shell crossed - that
-	geometry IS in the collision model. The hull case is placed from the real
-	entry point: the distance of the first structural plate along the shot
-	segment gives a world point, the tank's inverse matrix turns it into hull
-	coordinates, and device_damage.interior_zone splits it against THIS tank's
-	own turret-ring position and half width (both on the descriptor). So "behind
-	the ring" means behind that tank's actual ring, not a fixed fraction.
+    The turret case is read straight off the component the shell crossed - that
+    geometry IS in the collision model. The hull case is placed from the real
+    entry point: the distance of the first structural plate along the shot
+    segment gives a world point, the tank's inverse matrix turns it into hull
+    coordinates, and device_damage.interior_zone splits it against THIS tank's
+    own turret-ring position and half width (both on the descriptor). So "behind
+    the ring" means behind that tank's actual ring, not a fixed fraction.
 
-	If any of that is unavailable the bearing to the shooter decides, which is
-	coarse but never wrong about a shot coming from directly astern.'''
-	import Math
-	_comp = None
-	_dist = None
-	try:
-		for _h in sorted(all_hits, key=lambda _x: _x[0]):
-			_m = _h[2]
-			if _m is None:
-				continue
-			# The plate that stopped or admitted the round: structural, with thickness.
-			if getattr(_m, 'vehicleDamageFactor', 1.0) != 0.0 and float(getattr(_m, 'armor', 0.0) or 0.0) > 0.0:
-				_comp = _h[3]
-				_dist = _h[0]
-				break
-	except Exception:
-		_comp = None
-	try:
-		if _comp is not None:
-			if str(_descriptor_value(_comp, 'itemTypeName', '')) in ('vehicleTurret', 'vehicleGun'):
-				return 'turret'
-	except Exception:
-		pass
-	# Entry point in the tank's own frame, compared against its own geometry.
-	try:
-		if td is None:
-			td = getattr(target_mock, 'typeDescriptor', None)
-		if td is not None and _dist is not None and end_pos is not None:
-			_dx = float(end_pos.x) - float(start_pos.x)
-			_dy = float(end_pos.y) - float(start_pos.y)
-			_dz = float(end_pos.z) - float(start_pos.z)
-			_dl = (_dx * _dx + _dy * _dy + _dz * _dz) ** 0.5
-			if _dl > 0.001:
-				_s = float(_dist) / _dl
-				_wp = Math.Vector3(float(start_pos.x) + _dx * _s,
-				                   float(start_pos.y) + _dy * _s,
-				                   float(start_pos.z) + _dz * _s)
-				_inv = Math.Matrix(target_mock.matrix)
-				_inv.invert()
-				_lp = _inv.applyPoint(_wp)
-				# Vehicle origin sits on the chassis; the hull model is offset from it.
-				_hp = _descriptor_value(td.chassis, 'hullPosition')
-				_ring = _descriptor_value(td.hull, 'turretPositions')[0]
-				_bb = _descriptor_value(td.hull, 'hitTester').bbox
-				_hw = max(abs(float(_bb[0].x)), abs(float(_bb[1].x)))
-				from gui.mods.offline_lan_0922 import device_damage as _DDz
-				return _DDz.interior_zone(float(_lp.x) - float(_hp.x),
-				                          float(_lp.z) - float(_hp.z),
-				                          float(_ring.z), _hw)
-	except Exception as _ze:
-		LOG_DEBUG('interior zone from geometry failed, using bearing:', str(_ze))
-	try:
-		_pos = target_mock.position
-		_fwd = Math.Matrix(target_mock.matrix).applyVector(Math.Vector3(0.0, 0.0, 1.0))
-		_fx, _fz = float(_fwd.x), float(_fwd.z)
-		_fl = (_fx * _fx + _fz * _fz) ** 0.5
-		_tx = float(start_pos.x) - float(_pos.x)
-		_tz = float(start_pos.z) - float(_pos.z)
-		_tl = (_tx * _tx + _tz * _tz) ** 0.5
-		if _fl > 0.001 and _tl > 0.001:
-			_cos = (_fx * _tx + _fz * _tz) / (_fl * _tl)
-			if _cos >= 0.5:
-				return 'hullFront'      # within 60 deg of the nose
-			if _cos <= -0.5:
-				return 'hullRear'
-	except Exception:
-		pass
-	return 'hullSide'
+    If any of that is unavailable the bearing to the shooter decides, which is
+    coarse but never wrong about a shot coming from directly astern.'''
+    import Math
+    _comp = None
+    _dist = None
+    try:
+        for _h in sorted(all_hits, key=lambda _x: _x[0]):
+            _m = _h[2]
+            if _m is None:
+                continue
+            # The plate that stopped or admitted the round: structural, with thickness.
+            if getattr(_m, 'vehicleDamageFactor', 1.0) != 0.0 and float(getattr(_m, 'armor', 0.0) or 0.0) > 0.0:
+                _comp = _h[3]
+                _dist = _h[0]
+                break
+    except Exception:
+        _comp = None
+    try:
+        if _comp is not None:
+            if str(_descriptor_value(_comp, 'itemTypeName', '')) in ('vehicleTurret', 'vehicleGun'):
+                return 'turret'
+    except Exception:
+        pass
+    # Entry point in the tank's own frame, compared against its own geometry.
+    try:
+        if td is None:
+            td = getattr(target_mock, 'typeDescriptor', None)
+        if td is not None and _dist is not None and end_pos is not None:
+            _dx = float(end_pos.x) - float(start_pos.x)
+            _dy = float(end_pos.y) - float(start_pos.y)
+            _dz = float(end_pos.z) - float(start_pos.z)
+            _dl = (_dx * _dx + _dy * _dy + _dz * _dz) ** 0.5
+            if _dl > 0.001:
+                _s = float(_dist) / _dl
+                _wp = Math.Vector3(float(start_pos.x) + _dx * _s,
+                                   float(start_pos.y) + _dy * _s,
+                                   float(start_pos.z) + _dz * _s)
+                _inv = Math.Matrix(target_mock.matrix)
+                _inv.invert()
+                _lp = _inv.applyPoint(_wp)
+                # Vehicle origin sits on the chassis; the hull model is offset from it.
+                _hp = _descriptor_value(td.chassis, 'hullPosition')
+                _ring = _descriptor_value(td.hull, 'turretPositions')[0]
+                _bb = _descriptor_value(td.hull, 'hitTester').bbox
+                _hw = max(abs(float(_bb[0].x)), abs(float(_bb[1].x)))
+                from gui.mods.offline_lan_0922 import device_damage as _DDz
+                return _DDz.interior_zone(float(_lp.x) - float(_hp.x),
+                                          float(_lp.z) - float(_hp.z),
+                                          float(_ring.z), _hw)
+    except Exception as _ze:
+        LOG_DEBUG('interior zone from geometry failed, using bearing:', str(_ze))
+    try:
+        _pos = target_mock.position
+        _fwd = Math.Matrix(target_mock.matrix).applyVector(Math.Vector3(0.0, 0.0, 1.0))
+        _fx, _fz = float(_fwd.x), float(_fwd.z)
+        _fl = (_fx * _fx + _fz * _fz) ** 0.5
+        _tx = float(start_pos.x) - float(_pos.x)
+        _tz = float(start_pos.z) - float(_pos.z)
+        _tl = (_tx * _tx + _tz * _tz) ** 0.5
+        if _fl > 0.001 and _tl > 0.001:
+            _cos = (_fx * _tx + _fz * _tz) / (_fl * _tl)
+            if _cos >= 0.5:
+                return 'hullFront'      # within 60 deg of the nose
+            if _cos <= -0.5:
+                return 'hullRear'
+    except Exception:
+        pass
+    return 'hullSide'
 
 
 def _offh_voice_burst_pick(pending):
-	'''The one line worth saying out of a single strike: a destroyed module or a
-	downed crewman outranks a mere scratch, ties go to the first report.'''
-	best = None
-	best_rank = -1
-	for snd in pending:
-		rank = 2 if (snd.endswith('_destroyed') or snd.endswith('_killed')) else 1
-		if rank > best_rank:
-			best_rank = rank
-			best = snd
-	return best
+    '''The one line worth saying out of a single strike: a destroyed module or a
+    downed crewman outranks a mere scratch, ties go to the first report.'''
+    best = None
+    best_rank = -1
+    for snd in pending:
+        rank = 2 if (snd.endswith('_destroyed') or snd.endswith('_killed')) else 1
+        if rank > best_rank:
+            best_rank = rank
+            best = snd
+    return best
 
 
 def _offh_ignite(target_mock, is_player_target, reason):
-	'''Set a vehicle alight and tell the damage panel about it.'''
-	target_mock.is_on_fire = True
-	try:
-		import BigWorld as _bwig
-		target_mock._fire_started = _bwig.time()
-	except Exception:
-		target_mock._fire_started = None
-	LOG_DEBUG('FIRE IGNITED ON: %s (%s)' % (getattr(target_mock, 'id', 'PLAYER'), reason))
-	if (not is_player_target or getattr(target_mock, '_offline_proposal_only', False)):
-		return
-	try:
-		import gui.WindowsManager
-		bw = gui.WindowsManager.g_windowsManager.battleWindow
-		if bw is not None and hasattr(bw, 'damagePanel'):
-			bw.damagePanel.onFireInVehicle(True)
-	except Exception as _fe:
-		LOG_DEBUG('FIRE UI UPDATE ERR:', str(_fe))
+    '''Set a vehicle alight and tell the damage panel about it.'''
+    target_mock.is_on_fire = True
+    try:
+        import BigWorld as _bwig
+        target_mock._fire_started = _bwig.time()
+    except Exception:
+        target_mock._fire_started = None
+    LOG_DEBUG('FIRE IGNITED ON: %s (%s)' % (getattr(target_mock, 'id', 'PLAYER'), reason))
+    if (not is_player_target or getattr(target_mock, '_offline_proposal_only', False)):
+        return
+    try:
+        import gui.WindowsManager
+        bw = gui.WindowsManager.g_windowsManager.battleWindow
+        if bw is not None and hasattr(bw, 'damagePanel'):
+            bw.damagePanel.onFireInVehicle(True)
+    except Exception as _fe:
+        LOG_DEBUG('FIRE UI UPDATE ERR:', str(_fe))
 
 
 def _offh_extinguish(target_mock, is_player_target, reason):
-	'''End a fire and bring the fuel tank back to its regen cap.
+    '''End a fire and bring the fuel tank back to its regen cap.
 
-	The fuel tank has no repair bar in the game - a destroyed one is red for as
-	long as the tank burns and turns orange the moment the fire is out, whether
-	the crew smothered it or an extinguisher did. That step is here rather than
-	in the repair tick, because it is the FIRE ending that restores it, not time
-	spent repairing.'''
-	if not getattr(target_mock, 'is_on_fire', False):
-		return
-	target_mock.is_on_fire = False
-	target_mock._fire_started = None
-	LOG_DEBUG('FIRE OUT ON: %s (%s)' % (getattr(target_mock, 'id', 'PLAYER'), reason))
-	if (is_player_target and not getattr(target_mock, '_offline_proposal_only', False)):
-		try:
-			import gui.WindowsManager
-			bw = gui.WindowsManager.g_windowsManager.battleWindow
-			if bw is not None and hasattr(bw, 'damagePanel'):
-				bw.damagePanel.onFireInVehicle(False)
-		except Exception as _xe:
-			LOG_DEBUG('FIRE UI CLEAR ERR:', str(_xe))
-	# Fuel tank: destroyed -> back at the regen cap, which reads as 'repaired'.
-	try:
-		from gui.mods.offline_lan_0922 import device_damage as _DDx
-		td = _device_td(target_mock)
-		hp_map = getattr(target_mock, 'devices_hp', None)
-		if hp_map is None or td is None:
-			return
-		name = 'fuelTankHealth'
-		cap = _DDx.device_regen_hp(td, name)
-		if cap is None or hp_map.get(name, cap) >= cap:
-			return
-		hp_map[name] = cap
-		destroyed = getattr(target_mock, '_destroyed_devices', None)
-		if destroyed is not None:
-			destroyed.discard(name)
-		critical = getattr(target_mock, '_critical_devices', None)
-		if critical is None:
-			critical = set()
-			target_mock._critical_devices = critical
-		critical.add(name)
-		states = getattr(target_mock, '_module_states', None)
-		max_hp = _DDx.device_max_hp(td, name)
-		new_state = 'critical'
-		if states is not None:
-			states[name] = new_state
-		_push_device_ui(target_mock, is_player_target, name, cap, max_hp, state='repaired')
-	except Exception as _fx:
-		LOG_DEBUG('fuel tank restore after fire failed:', str(_fx))
+    The fuel tank has no repair bar in the game - a destroyed one is red for as
+    long as the tank burns and turns orange the moment the fire is out, whether
+    the crew smothered it or an extinguisher did. That step is here rather than
+    in the repair tick, because it is the FIRE ending that restores it, not time
+    spent repairing.'''
+    if not getattr(target_mock, 'is_on_fire', False):
+        return
+    target_mock.is_on_fire = False
+    target_mock._fire_started = None
+    LOG_DEBUG('FIRE OUT ON: %s (%s)' % (getattr(target_mock, 'id', 'PLAYER'), reason))
+    if (is_player_target and not getattr(target_mock, '_offline_proposal_only', False)):
+        try:
+            import gui.WindowsManager
+            bw = gui.WindowsManager.g_windowsManager.battleWindow
+            if bw is not None and hasattr(bw, 'damagePanel'):
+                bw.damagePanel.onFireInVehicle(False)
+        except Exception as _xe:
+            LOG_DEBUG('FIRE UI CLEAR ERR:', str(_xe))
+    # Fuel tank: destroyed -> back at the regen cap, which reads as 'repaired'.
+    try:
+        from gui.mods.offline_lan_0922 import device_damage as _DDx
+        td = _device_td(target_mock)
+        hp_map = getattr(target_mock, 'devices_hp', None)
+        if hp_map is None or td is None:
+            return
+        name = 'fuelTankHealth'
+        cap = _DDx.device_regen_hp(td, name)
+        if cap is None or hp_map.get(name, cap) >= cap:
+            return
+        hp_map[name] = cap
+        destroyed = getattr(target_mock, '_destroyed_devices', None)
+        if destroyed is not None:
+            destroyed.discard(name)
+        critical = getattr(target_mock, '_critical_devices', None)
+        if critical is None:
+            critical = set()
+            target_mock._critical_devices = critical
+        critical.add(name)
+        states = getattr(target_mock, '_module_states', None)
+        max_hp = _DDx.device_max_hp(td, name)
+        new_state = 'critical'
+        if states is not None:
+            states[name] = new_state
+        _push_device_ui(target_mock, is_player_target, name, cap, max_hp, state='repaired')
+    except Exception as _fx:
+        LOG_DEBUG('fuel tank restore after fire failed:', str(_fx))
 
 
 def _offh_knock_out_everything(mock):
-	'''Put every module at 0 HP and every crewman down for a terminal state.
+    '''Put every module at 0 HP and every crewman down for a terminal state.
 
-	The stock #1513 death path owns the terminal damage-panel presentation.'''
-	try:
-		if getattr(mock, 'devices_hp', None) is None:
-			mock.devices_hp = {}
-		for _n in _OFFH_DEATH_DEVICES:
-			mock.devices_hp[_n] = 0
-		# The repair tick and the module GUI read the destroyed-SET, not raw HP.
-		_ds = getattr(mock, '_destroyed_devices', None)
-		if _ds is None:
-			_ds = set()
-			mock._destroyed_devices = _ds
-		for _n in _OFFH_DEATH_DEVICES:
-			_ds.add(_n)
-		_cs = getattr(mock, '_critical_devices', None)
-		if _cs is not None:
-			_cs.clear()
-	except Exception:
-		pass
-	# Crew: use the tank's REAL roster ('gunner1', 'loader1', ...). The old generic
-	# role names never matched the panel entries, so crew never turned red.
-	_roster = []
-	try:
-		_roster = _crew_roster(_device_td(mock))
-		_ko = getattr(mock, '_crew_ko', None)
-		if _ko is None:
-			_ko = set()
-			mock._crew_ko = _ko
-		for _c in _roster:
-			_ko.add(_c)
-		_recompute_crew_impaired(mock)
-	except Exception:
-		pass
-	try:
-		_refresh_mobility_flags(mock)
-	except Exception:
-		pass
-	LOG_DEBUG('KNOCKOUT called: devices=%d crew=%d' % (len(_OFFH_DEATH_DEVICES), len(_roster)))
+    The stock #1513 death path owns the terminal damage-panel presentation.'''
+    try:
+        if getattr(mock, 'devices_hp', None) is None:
+            mock.devices_hp = {}
+        for _n in _OFFH_DEATH_DEVICES:
+            mock.devices_hp[_n] = 0
+        # The repair tick and the module GUI read the destroyed-SET, not raw HP.
+        _ds = getattr(mock, '_destroyed_devices', None)
+        if _ds is None:
+            _ds = set()
+            mock._destroyed_devices = _ds
+        for _n in _OFFH_DEATH_DEVICES:
+            _ds.add(_n)
+        _cs = getattr(mock, '_critical_devices', None)
+        if _cs is not None:
+            _cs.clear()
+    except Exception:
+        pass
+    # Crew: use the tank's REAL roster ('gunner1', 'loader1', ...). The old generic
+    # role names never matched the panel entries, so crew never turned red.
+    _roster = []
+    try:
+        _roster = _crew_roster(_device_td(mock))
+        _ko = getattr(mock, '_crew_ko', None)
+        if _ko is None:
+            _ko = set()
+            mock._crew_ko = _ko
+        for _c in _roster:
+            _ko.add(_c)
+        _recompute_crew_impaired(mock)
+    except Exception:
+        pass
+    try:
+        _refresh_mobility_flags(mock)
+    except Exception:
+        pass
+    LOG_DEBUG('KNOCKOUT called: devices=%d crew=%d' % (len(_OFFH_DEATH_DEVICES), len(_roster)))
 
 
 def _offh_module_test_mode():
-	'''config module_test_mode: a bench for the module model.
+    '''config module_test_mode: a bench for the module model.
 
-	Bot shells still roll every module and crew crit exactly as they normally
-	would - same era saving throws, same HP pools, same repair - but they take
-	no hull HP off the player, an ammo rack does not detonate the tank, and fire
-	does not drain. So a crit can be watched, repaired, re-broken and listened to
-	without the run ending after four shells. Nothing about the crit model
-	itself is altered; only the consequences that would end the test.'''
-	try:
-		from _constants import CONFIG_OPTIONS as _TCFG
-		return bool(_TCFG.get('module_test_mode', False))
-	except Exception:
-		return False
+    Bot shells still roll every module and crew crit exactly as they normally
+    would - same era saving throws, same HP pools, same repair - but they take
+    no hull HP off the player, an ammo rack does not detonate the tank, and fire
+    does not drain. So a crit can be watched, repaired, re-broken and listened to
+    without the run ending after four shells. Nothing about the crit model
+    itself is altered; only the consequences that would end the test.'''
+    try:
+        from _constants import CONFIG_OPTIONS as _TCFG
+        return bool(_TCFG.get('module_test_mode', False))
+    except Exception:
+        return False
 
 
 def _offh_internal_layout(td):
-	'''Per-vehicle interior layout from the adopted profile data, or None.
+    '''Per-vehicle interior layout from the adopted profile data, or None.
 
-	None means no reliable internal geometry: the feature is switched off, the
-	adopted modules are absent, or this tank has no profile. Their build_layout()
-	keeps its own cache keyed by type + configuration, so calling it per shot is
-	cheap after the first hit on a given tank.'''
-	if td is None:
-		return None
-	try:
-		from _constants import CONFIG_OPTIONS as _LCFG
-		if not bool(_LCFG.get('internal_layout_profiles', True)):
-			return None
-	except Exception:
-		pass
-	try:
-		from gui.mods.offline_lan_0922 import internal_hit_layouts as _IHL
-	except Exception as _le:
-		if not globals().get('_offh_layout_import_logged'):
-			globals()['_offh_layout_import_logged'] = True
-			LOG_DEBUG('internal_hit_layouts unavailable, using zone model:', str(_le))
-		return None
-	try:
-		layout = _IHL.build_layout(td, log_build=False)
-		if not layout or not layout.get('valid'):
-			key = (_IHL.configuration_fingerprint(td),
-				tuple((layout or {}).get('errors', ())))
-			seen = globals().setdefault('_unavailable_layout_reports', set())
-			if key not in seen:
-				seen.add(key)
-				print('[Offline LAN 0.9.22] MODULE layout unavailable vehicle=%s errors=%s missing=%s' % (
-					_IHL.vehicle_type_name(td), (layout or {}).get('errors'),
-					(layout or {}).get('validation', {}).get('missing')))
-			return None
-		return layout
-	except Exception as _be:
-		LOG_DEBUG('build_layout failed:', str(_be))
-		return None
+    None means no reliable internal geometry: the feature is switched off, the
+    adopted modules are absent, or this tank has no profile. Their build_layout()
+    keeps its own cache keyed by type + configuration, so calling it per shot is
+    cheap after the first hit on a given tank.'''
+    if td is None:
+        return None
+    try:
+        from _constants import CONFIG_OPTIONS as _LCFG
+        if not bool(_LCFG.get('internal_layout_profiles', True)):
+            return None
+    except Exception:
+        pass
+    try:
+        from gui.mods.offline_lan_0922 import internal_hit_layouts as _IHL
+    except Exception as _le:
+        if not globals().get('_offh_layout_import_logged'):
+            globals()['_offh_layout_import_logged'] = True
+            LOG_DEBUG('internal_hit_layouts unavailable, using zone model:', str(_le))
+        return None
+    try:
+        layout = _IHL.build_layout(td, log_build=False)
+        if not layout or not layout.get('valid'):
+            key = (_IHL.configuration_fingerprint(td),
+                tuple((layout or {}).get('errors', ())))
+            seen = globals().setdefault('_unavailable_layout_reports', set())
+            if key not in seen:
+                seen.add(key)
+                print('[Offline LAN 0.9.22] MODULE layout unavailable vehicle=%s errors=%s missing=%s' % (
+                    _IHL.vehicle_type_name(td), (layout or {}).get('errors'),
+                    (layout or {}).get('validation', {}).get('missing')))
+            return None
+        return layout
+    except Exception as _be:
+        LOG_DEBUG('build_layout failed:', str(_be))
+        return None
 
 
 def prewarm_layout(td):
-	"""Prepare the hit layout only after all native component bounds exist.
+    """Prepare the hit layout only after all native component bounds exist.
 
-	An incomplete descriptor must never seed build_layout's configuration
-	cache with a failed layout before the real first shot can use it.
-	"""
-	if td is None:
-		return False
-	from gui.mods.offline_lan_0922 import internal_hit_layouts
-	for parent in internal_hit_layouts.SUPPORTED_PARENTS:
-		bounds, unused_source = internal_hit_layouts._bbox_for_component(td, parent)
-		if bounds is None:
-			return False
-	_offh_internal_layout(td)
-	return True
+    An incomplete descriptor must never seed build_layout's configuration
+    cache with a failed layout before the real first shot can use it.
+    """
+    if td is None:
+        return False
+    from gui.mods.offline_lan_0922 import internal_hit_layouts
+    for parent in internal_hit_layouts.SUPPORTED_PARENTS:
+        bounds, unused_source = internal_hit_layouts._bbox_for_component(td, parent)
+        if bounds is None:
+            return False
+    _offh_internal_layout(td)
+    return True
 
 
 def _offh_internal_ray_hits(target_mock, td, start_pos, end_pos, covered=()):
-	'''Interior modules and crew the shell REALLY passed through.
+    '''Interior modules and crew the shell REALLY passed through.
 
-	Returns [(entry_distance, extraName)] sorted front to back, or None when no
-	layout is available. Interior geometry lives in its parent component's own
-	space, so the segment goes through exactly the two transforms
-	Vehicle.getComponents applies: world -> vehicle -> component, which also
-	accounts for the current turret yaw and gun pitch.
+    Returns [(entry_distance, extraName)] sorted front to back, or None when no
+    layout is available. Interior geometry lives in its parent component's own
+    space, so the segment goes through exactly the two transforms
+    Vehicle.getComponents applies: world -> vehicle -> component, which also
+    accounts for the current turret yaw and gun pitch.
 
-	`covered` lists extra names the real collision model already produced for
-	this shot. Their layout drops any entity it finds in the per-vehicle
-	material table, but surveyingDevice is only in the GLOBAL table, so without
-	this the optics would be scored twice - once from geometry, once from the
-	profile.'''
-	layout = _offh_internal_layout(td)
-	if not layout or not layout.get('valid'):
-		return None
-	targets = layout.get('targets') or ()
-	if not targets:
-		return None
-	components = target_mock.getComponents()
-	if not components:
-		return []
-	import Math
-	from gui.mods.offline_lan_0922 import internal_geometry as _IG
-	_dx = float(end_pos.x) - float(start_pos.x)
-	_dy = float(end_pos.y) - float(start_pos.y)
-	_dz = float(end_pos.z) - float(start_pos.z)
-	_world_length = (_dx * _dx + _dy * _dy + _dz * _dz) ** 0.5
-	if _world_length <= 0.0001:
-		return []
-	inv = Math.Matrix(target_mock.matrix)
-	inv.invert()
-	_vs = inv.applyPoint(Math.Vector3(start_pos.x, start_pos.y, start_pos.z))
-	_ve = inv.applyPoint(Math.Vector3(end_pos.x, end_pos.y, end_pos.z))
-	local = {}
-	for compDescr, compMatrix, isAttached in components:
-		if not isAttached:
-			# A detached turret took its interior modules and crew with it.
-			continue
-		name = None
-		for candidate in ('chassis', 'hull', 'turret', 'gun'):
-			if compDescr is getattr(td, candidate, None):
-				name = candidate
-				break
-		if name is None:
-			continue
-		_ls = compMatrix.applyPoint(_vs)
-		_le = compMatrix.applyPoint(_ve)
-		local[name] = ((_ls.x, _ls.y, _ls.z), (_le.x, _le.y, _le.z))
-	hits = []
-	for target in targets:
-		seg = local.get(target.get('parent'))
-		if seg is None:
-			continue
-		entity = target.get('entity')
-		if not entity:
-			continue
-		name = str(entity) + 'Health'
-		if name in covered:
-			continue
-		interval = _IG.target_interval(seg[0], seg[1], target)
-		if interval is None:
-			continue
-		# target_interval is a normalized segment parameter. Native collision
-		# records use metres from ray start, so keep both sources in one unit before
-		# the stopping/exit-plate filters compare them.
-		hits.append((float(interval[0]) * _world_length, name))
-	hits.sort()
-	# Keep the nearest contact per device: disconnected source pieces and
-	# retained reconstructed zones must not multiply the saving throw.
-	seen = set()
-	unique = []
-	for dist, name in hits:
-		if name in seen:
-			continue
-		seen.add(name)
-		unique.append((dist, name))
-	return unique
+    `covered` lists extra names the real collision model already produced for
+    this shot. Their layout drops any entity it finds in the per-vehicle
+    material table, but surveyingDevice is only in the GLOBAL table, so without
+    this the optics would be scored twice - once from geometry, once from the
+    profile.'''
+    layout = _offh_internal_layout(td)
+    if not layout or not layout.get('valid'):
+        return None
+    targets = layout.get('targets') or ()
+    if not targets:
+        return None
+    components = target_mock.getComponents()
+    if not components:
+        return []
+    import Math
+    from gui.mods.offline_lan_0922 import internal_geometry as _IG
+    _dx = float(end_pos.x) - float(start_pos.x)
+    _dy = float(end_pos.y) - float(start_pos.y)
+    _dz = float(end_pos.z) - float(start_pos.z)
+    _world_length = (_dx * _dx + _dy * _dy + _dz * _dz) ** 0.5
+    if _world_length <= 0.0001:
+        return []
+    inv = Math.Matrix(target_mock.matrix)
+    inv.invert()
+    _vs = inv.applyPoint(Math.Vector3(start_pos.x, start_pos.y, start_pos.z))
+    _ve = inv.applyPoint(Math.Vector3(end_pos.x, end_pos.y, end_pos.z))
+    local = {}
+    for compDescr, compMatrix, isAttached in components:
+        if not isAttached:
+            # A detached turret took its interior modules and crew with it.
+            continue
+        name = None
+        for candidate in ('chassis', 'hull', 'turret', 'gun'):
+            if compDescr is getattr(td, candidate, None):
+                name = candidate
+                break
+        if name is None:
+            continue
+        _ls = compMatrix.applyPoint(_vs)
+        _le = compMatrix.applyPoint(_ve)
+        local[name] = ((_ls.x, _ls.y, _ls.z), (_le.x, _le.y, _le.z))
+    hits = []
+    for target in targets:
+        seg = local.get(target.get('parent'))
+        if seg is None:
+            continue
+        entity = target.get('entity')
+        if not entity:
+            continue
+        name = str(entity) + 'Health'
+        if name in covered:
+            continue
+        interval = _IG.target_interval(seg[0], seg[1], target)
+        if interval is None:
+            continue
+        # target_interval is a normalized segment parameter. Native collision
+        # records use metres from ray start, so keep both sources in one unit before
+        # the stopping/exit-plate filters compare them.
+        hits.append((float(interval[0]) * _world_length, name))
+    hits.sort()
+    # Keep the nearest contact per device: disconnected source pieces and
+    # retained reconstructed zones must not multiply the saving throw.
+    seen = set()
+    unique = []
+    for dist, name in hits:
+        if name in seen:
+            continue
+        seen.add(name)
+        unique.append((dist, name))
+    return unique
 
 
 _OFFH_HE_CONE_COS = 0.7071067811865476  # cos(45 degrees)
@@ -510,756 +510,756 @@ _OFFH_HE_CONE_EDGE_FACTOR = 1.4142135623730951  # 1 / cos(45 degrees)
 
 
 def _offh_xyz(value):
-	try:
-		return float(value.x), float(value.y), float(value.z)
-	except Exception:
-		return float(value[0]), float(value[1]), float(value[2])
+    try:
+        return float(value.x), float(value.y), float(value.z)
+    except Exception:
+        return float(value[0]), float(value[1]), float(value[2])
 
 
 def _offh_he_internal_depth(shell):
-	'''0.9.22 HE interior-cone depth in metres: shell caliber / 100.'''
-	try:
-		caliber = float(_descriptor_value(shell, 'caliber', 0.0) or 0.0)
-	except Exception:
-		caliber = 0.0
-	return max(0.0, caliber / 100.0)
+    '''0.9.22 HE interior-cone depth in metres: shell caliber / 100.'''
+    try:
+        caliber = float(_descriptor_value(shell, 'caliber', 0.0) or 0.0)
+    except Exception:
+        caliber = 0.0
+    return max(0.0, caliber / 100.0)
 
 
 def _offh_internal_cone_hits(target_mock, td, burst_pos, direction, shell,
-		covered=()):
-	'''Interior modules inside the 0.9.22 HE damage cone.
+        covered=()):
+    '''Interior modules inside the 0.9.22 HE damage cone.
 
-	The cone starts at the burst point, follows the shell's incoming direction,
-	has a 45-degree half angle, and extends caliber / 100 metres along its axis.
-	The adopted targets live in current component-local coordinates, so both the
-	apex and a direction point use the same world -> vehicle -> component chain as
-	the direct-ray resolver. Returns one nearest axial hit per logical device, or
-	None when no validated per-vehicle layout exists.
-	'''
-	layout = _offh_internal_layout(td)
-	if not layout or not layout.get('valid'):
-		return None
-	depth = _offh_he_internal_depth(shell)
-	if depth <= 0.0001:
-		return []
-	components = target_mock.getComponents()
-	if not components:
-		return []
-	try:
-		bx, by, bz = _offh_xyz(burst_pos)
-		dx, dy, dz = _offh_xyz(direction)
-	except Exception:
-		return []
-	direction_length = (dx * dx + dy * dy + dz * dz) ** 0.5
-	if direction_length <= 0.0001:
-		return []
-	dx /= direction_length
-	dy /= direction_length
-	dz /= direction_length
-	import Math
-	from gui.mods.offline_lan_0922 import internal_hit_layouts as _IHL
-	inv = Math.Matrix(target_mock.matrix)
-	inv.invert()
-	world_burst = Math.Vector3(bx, by, bz)
-	world_tip = Math.Vector3(
-		bx + dx * depth, by + dy * depth, bz + dz * depth)
-	vehicle_burst = inv.applyPoint(world_burst)
-	vehicle_tip = inv.applyPoint(world_tip)
-	contexts = {}
-	for compDescr, compMatrix, isAttached in components:
-		if not isAttached:
-			continue
-		name = None
-		for candidate in ('chassis', 'hull', 'turret', 'gun'):
-			if compDescr is getattr(td, candidate, None):
-				name = candidate
-				break
-		if name is None:
-			continue
-		local_burst = compMatrix.applyPoint(vehicle_burst)
-		local_tip = compMatrix.applyPoint(vehicle_tip)
-		point = _offh_xyz(local_burst)
-		tip = _offh_xyz(local_tip)
-		contexts[name] = {
-			'point': point,
-			'direction': tuple(tip[index] - point[index]
-				for index in range(3)),
-		}
-	_excluded = set()
-	for item in covered or ():
-		name = str(item)
-		if name.endswith('Health'):
-			name = name[:-6]
-		if name:
-			_excluded.add(name)
-	# resolve_explosion's radius is radial distance from the apex. A 45-degree
-	# finite cone whose AXIAL depth is `depth` reaches sqrt(2) * depth at its rim;
-	# pass that enclosing radius, then enforce the exact axial boundary below.
-	records = _IHL.resolve_explosion(
-		layout, contexts, depth * _OFFH_HE_CONE_EDGE_FACTOR, mode='cone',
-		cone_cos=_OFFH_HE_CONE_COS, excluded_entities=_excluded,
-		cone_depth_m=depth)
-	hits = []
-	for record in records:
-		if not record.get('damage_eligible', False):
-			continue
-		entity = record.get('entity')
-		context = contexts.get(record.get('parent'))
-		hit_point = record.get('hit_point')
-		if not entity or not context or hit_point is None:
-			continue
-		axis = context.get('direction') or (0.0, 0.0, 0.0)
-		axis_length = sum(float(value) * float(value)
-			for value in axis) ** 0.5
-		if axis_length <= 0.0001:
-			continue
-		axial = record.get('cone_entry_axial_m')
-		if axial is None:
-			delta = tuple(float(hit_point[index]) -
-				float(context['point'][index]) for index in range(3))
-			axial = sum(delta[index] * float(axis[index])
-				for index in range(3)) / axis_length
-		axial = float(axial)
-		if axial < -0.0001 or axial > depth + 0.0001:
-			continue
-		hits.append((max(0.0, float(axial)), str(entity) + 'Health'))
-	hits.sort()
-	seen = set()
-	unique = []
-	for distance, name in hits:
-		if name in seen:
-			continue
-		seen.add(name)
-		unique.append((distance, name))
-	return unique
+    The cone starts at the burst point, follows the shell's incoming direction,
+    has a 45-degree half angle, and extends caliber / 100 metres along its axis.
+    The adopted targets live in current component-local coordinates, so both the
+    apex and a direction point use the same world -> vehicle -> component chain as
+    the direct-ray resolver. Returns one nearest axial hit per logical device, or
+    None when no validated per-vehicle layout exists.
+    '''
+    layout = _offh_internal_layout(td)
+    if not layout or not layout.get('valid'):
+        return None
+    depth = _offh_he_internal_depth(shell)
+    if depth <= 0.0001:
+        return []
+    components = target_mock.getComponents()
+    if not components:
+        return []
+    try:
+        bx, by, bz = _offh_xyz(burst_pos)
+        dx, dy, dz = _offh_xyz(direction)
+    except Exception:
+        return []
+    direction_length = (dx * dx + dy * dy + dz * dz) ** 0.5
+    if direction_length <= 0.0001:
+        return []
+    dx /= direction_length
+    dy /= direction_length
+    dz /= direction_length
+    import Math
+    from gui.mods.offline_lan_0922 import internal_hit_layouts as _IHL
+    inv = Math.Matrix(target_mock.matrix)
+    inv.invert()
+    world_burst = Math.Vector3(bx, by, bz)
+    world_tip = Math.Vector3(
+        bx + dx * depth, by + dy * depth, bz + dz * depth)
+    vehicle_burst = inv.applyPoint(world_burst)
+    vehicle_tip = inv.applyPoint(world_tip)
+    contexts = {}
+    for compDescr, compMatrix, isAttached in components:
+        if not isAttached:
+            continue
+        name = None
+        for candidate in ('chassis', 'hull', 'turret', 'gun'):
+            if compDescr is getattr(td, candidate, None):
+                name = candidate
+                break
+        if name is None:
+            continue
+        local_burst = compMatrix.applyPoint(vehicle_burst)
+        local_tip = compMatrix.applyPoint(vehicle_tip)
+        point = _offh_xyz(local_burst)
+        tip = _offh_xyz(local_tip)
+        contexts[name] = {
+            'point': point,
+            'direction': tuple(tip[index] - point[index]
+                for index in range(3)),
+        }
+    _excluded = set()
+    for item in covered or ():
+        name = str(item)
+        if name.endswith('Health'):
+            name = name[:-6]
+        if name:
+            _excluded.add(name)
+    # resolve_explosion's radius is radial distance from the apex. A 45-degree
+    # finite cone whose AXIAL depth is `depth` reaches sqrt(2) * depth at its rim;
+    # pass that enclosing radius, then enforce the exact axial boundary below.
+    records = _IHL.resolve_explosion(
+        layout, contexts, depth * _OFFH_HE_CONE_EDGE_FACTOR, mode='cone',
+        cone_cos=_OFFH_HE_CONE_COS, excluded_entities=_excluded,
+        cone_depth_m=depth)
+    hits = []
+    for record in records:
+        if not record.get('damage_eligible', False):
+            continue
+        entity = record.get('entity')
+        context = contexts.get(record.get('parent'))
+        hit_point = record.get('hit_point')
+        if not entity or not context or hit_point is None:
+            continue
+        axis = context.get('direction') or (0.0, 0.0, 0.0)
+        axis_length = sum(float(value) * float(value)
+            for value in axis) ** 0.5
+        if axis_length <= 0.0001:
+            continue
+        axial = record.get('cone_entry_axial_m')
+        if axial is None:
+            delta = tuple(float(hit_point[index]) -
+                float(context['point'][index]) for index in range(3))
+            axial = sum(delta[index] * float(axis[index])
+                for index in range(3)) / axis_length
+        axial = float(axial)
+        if axial < -0.0001 or axial > depth + 0.0001:
+            continue
+        hits.append((max(0.0, float(axial)), str(entity) + 'Health'))
+    hits.sort()
+    seen = set()
+    unique = []
+    for distance, name in hits:
+        if name in seen:
+            continue
+        seen.add(name)
+        unique.append((distance, name))
+    return unique
 
 
 def _device_td(mock):
-	# Server projections already own their descriptor and cannot import BigWorld.
-	# An explicit None also belongs to this vehicle; only a missing attribute
-	# retains the stock player-descriptor fallback.
-	try:
-		return mock.typeDescriptor
-	except AttributeError:
-		import BigWorld
-		return getattr(BigWorld.player(), 'vehicleTypeDescriptor', None)
+    # Server projections already own their descriptor and cannot import BigWorld.
+    # An explicit None also belongs to this vehicle; only a missing attribute
+    # retains the stock player-descriptor fallback.
+    try:
+        return mock.typeDescriptor
+    except AttributeError:
+        import BigWorld
+        return getattr(BigWorld.player(), 'vehicleTypeDescriptor', None)
 
 
 def _crew_roster(td):
-	# Crew instance names ('commander','driver','gunner1',...) - the crew health
-	# extra names minus 'Health'.
-	names = []
-	try:
-		enumRoles = {'gunner': 1, 'loader': 1, 'radioman': 1}
-		for roles in getattr(getattr(td, 'type', None), 'crewRoles', []):
-			mainRole = roles[0]
-			if mainRole in enumRoles:
-				names.append(mainRole + str(enumRoles[mainRole]))
-				enumRoles[mainRole] += 1
-			else:
-				names.append(mainRole)
-	except Exception:
-		pass
-	if not names:
-		names = ['commander', 'driver', 'gunner1', 'loader1', 'radioman1']
-	return names
+    # Crew instance names ('commander','driver','gunner1',...) - the crew health
+    # extra names minus 'Health'.
+    names = []
+    try:
+        enumRoles = {'gunner': 1, 'loader': 1, 'radioman': 1}
+        for roles in getattr(getattr(td, 'type', None), 'crewRoles', []):
+            mainRole = roles[0]
+            if mainRole in enumRoles:
+                names.append(mainRole + str(enumRoles[mainRole]))
+                enumRoles[mainRole] += 1
+            else:
+                names.append(mainRole)
+    except Exception:
+        pass
+    if not names:
+        names = ['commander', 'driver', 'gunner1', 'loader1', 'radioman1']
+    return names
 
 
 def _recompute_crew_impaired(mock):
-	# Cache the impaired BASE roles. A small crew has men covering SEVERAL roles,
-	# so one casualty can impair more than one - read that from td.type.crewRoles
-	# rather than assuming one role per man.
-	from gui.mods.offline_lan_0922 import device_damage as _DDc
-	ko = getattr(mock, '_crew_ko', None)
-	if not ko:
-		mock._crew_impaired = frozenset()
-		return
-	td = _device_td(mock)
-	roster = _crew_roster(td)
-	try:
-		crewRoles = list(getattr(getattr(td, 'type', None), 'crewRoles', []))
-	except Exception:
-		crewRoles = []
-	roles = set()
-	for i, inst in enumerate(roster):
-		if inst in ko:
-			if i < len(crewRoles):
-				for r in crewRoles[i]:
-					roles.add(r)
-			else:
-				roles.add(_DDc.crew_role_base(inst))
-	mock._crew_impaired = frozenset(roles)
+    # Cache the impaired BASE roles. A small crew has men covering SEVERAL roles,
+    # so one casualty can impair more than one - read that from td.type.crewRoles
+    # rather than assuming one role per man.
+    from gui.mods.offline_lan_0922 import device_damage as _DDc
+    ko = getattr(mock, '_crew_ko', None)
+    if not ko:
+        mock._crew_impaired = frozenset()
+        return
+    td = _device_td(mock)
+    roster = _crew_roster(td)
+    try:
+        crewRoles = list(getattr(getattr(td, 'type', None), 'crewRoles', []))
+    except Exception:
+        crewRoles = []
+    roles = set()
+    for i, inst in enumerate(roster):
+        if inst in ko:
+            if i < len(crewRoles):
+                for r in crewRoles[i]:
+                    roles.add(r)
+            else:
+                roles.add(_DDc.crew_role_base(inst))
+    mock._crew_impaired = frozenset(roles)
 
 
 def _crew_factor(mock, stat):
-	# Stat multiplier from this mock's knocked-out crew (1.0 when all fit).
-	imp = getattr(mock, '_crew_impaired', None)
-	if not imp:
-		return 1.0
-	try:
-		from gui.mods.offline_lan_0922 import device_damage as _DDc
-		return _DDc.crew_stat_factor(imp, stat)
-	except Exception:
-		return 1.0
+    # Stat multiplier from this mock's knocked-out crew (1.0 when all fit).
+    imp = getattr(mock, '_crew_impaired', None)
+    if not imp:
+        return 1.0
+    try:
+        from gui.mods.offline_lan_0922 import device_damage as _DDc
+        return _DDc.crew_stat_factor(imp, stat)
+    except Exception:
+        return 1.0
 
 
 def _module_factor(mock, stat):
-	# Stat multiplier from this mock's MODULE state (1.0 when everything is
-	# whole), the counterpart of _crew_factor. The client never had these -
-	# avatar.py only gates input on a destroyed engine/track/gun - so the
-	# numbers are reconstructed in device_damage.DAMAGED_MODULE_EFFICIENCY.
-	if mock is None:
-		return 1.0
-	try:
-		from gui.mods.offline_lan_0922 import device_damage as _DDm
-		return _DDm.module_stat_factor(getattr(mock, 'devices_hp', None),
-		                              getattr(mock, '_destroyed_devices', None),
-		                              _device_td(mock), stat,
-		                              getattr(mock, '_critical_devices', None))
-	except Exception:
-		return 1.0
+    # Stat multiplier from this mock's MODULE state (1.0 when everything is
+    # whole), the counterpart of _crew_factor. The client never had these -
+    # avatar.py only gates input on a destroyed engine/track/gun - so the
+    # numbers are reconstructed in device_damage.DAMAGED_MODULE_EFFICIENCY.
+    if mock is None:
+        return 1.0
+    try:
+        from gui.mods.offline_lan_0922 import device_damage as _DDm
+        return _DDm.module_stat_factor(getattr(mock, 'devices_hp', None),
+                                      getattr(mock, '_destroyed_devices', None),
+                                      _device_td(mock), stat,
+                                      getattr(mock, '_critical_devices', None))
+    except Exception:
+        return 1.0
 
 
 def _knock_out_crew(mock, crew_name, is_player_target):
-	# Binary knock-out (a med kit revives). True when newly downed.
-	ko = getattr(mock, '_crew_ko', None)
-	if ko is None:
-		ko = set()
-		mock._crew_ko = ko
-	if crew_name in ko:
-		return False
-	ko.add(crew_name)
-	_recompute_crew_impaired(mock)
-	LOG_DEBUG('CREW KO:', getattr(mock, 'id', 'PLAYER'), crew_name)
-	if (is_player_target and not getattr(mock, '_offline_proposal_only', False)):
-		try:
-			import gui.WindowsManager
-			bw = gui.WindowsManager.g_windowsManager.battleWindow
-			if bw is not None and hasattr(bw, 'damagePanel'):
-				try: bw.damagePanel.updateState(crew_name, 'destroyed')
-				except Exception as _cse: LOG_DEBUG('crew updateState err:', crew_name, str(_cse))
-			_tdk = getattr(BigWorld.player(), 'vehicleTypeDescriptor', None)
-			_exk = _tdk.extrasDict.get(crew_name + 'Health') if (_tdk is not None and hasattr(_tdk, 'extrasDict')) else None
-			_sndk = getattr(_exk, 'sounds', {}).get('destroyed') if _exk is not None else None
-			_offh_play_crit_voice(_sndk)
-		except Exception as _ke:
-			LOG_DEBUG('crew KO ui err:', str(_ke))
-	return True
+    # Binary knock-out (a med kit revives). True when newly downed.
+    ko = getattr(mock, '_crew_ko', None)
+    if ko is None:
+        ko = set()
+        mock._crew_ko = ko
+    if crew_name in ko:
+        return False
+    ko.add(crew_name)
+    _recompute_crew_impaired(mock)
+    LOG_DEBUG('CREW KO:', getattr(mock, 'id', 'PLAYER'), crew_name)
+    if (is_player_target and not getattr(mock, '_offline_proposal_only', False)):
+        try:
+            import gui.WindowsManager
+            bw = gui.WindowsManager.g_windowsManager.battleWindow
+            if bw is not None and hasattr(bw, 'damagePanel'):
+                try: bw.damagePanel.updateState(crew_name, 'destroyed')
+                except Exception as _cse: LOG_DEBUG('crew updateState err:', crew_name, str(_cse))
+            _tdk = getattr(BigWorld.player(), 'vehicleTypeDescriptor', None)
+            _exk = _tdk.extrasDict.get(crew_name + 'Health') if (_tdk is not None and hasattr(_tdk, 'extrasDict')) else None
+            _sndk = getattr(_exk, 'sounds', {}).get('destroyed') if _exk is not None else None
+            _offh_play_crit_voice(_sndk)
+        except Exception as _ke:
+            LOG_DEBUG('crew KO ui err:', str(_ke))
+    return True
 
 
 def _record_proposal_crew_damage(mock, crew_name):
-	operations = getattr(mock, '_critical_damage_operations', None)
-	if operations is not None:
-		operations['crew_ko'].add(str(crew_name))
+    operations = getattr(mock, '_critical_damage_operations', None)
+    if operations is not None:
+        operations['crew_ko'].add(str(crew_name))
 
 
 def _record_proposal_device_damage(mock, name, amount, maximum):
-	operations = getattr(mock, '_critical_damage_operations', None)
-	if operations is None:
-		return
-	try:
-		maximum = max(1.0, float(maximum))
-		amount = max(0.0, min(maximum, float(amount)))
-	except (TypeError, ValueError, OverflowError):
-		return
-	if amount <= 0.0005:
-		return
-	previous = float(operations['devices'].get(name, 0.0) or 0.0)
-	operations['devices'][str(name)] = min(maximum, previous + amount)
+    operations = getattr(mock, '_critical_damage_operations', None)
+    if operations is None:
+        return
+    try:
+        maximum = max(1.0, float(maximum))
+        amount = max(0.0, min(maximum, float(amount)))
+    except (TypeError, ValueError, OverflowError):
+        return
+    if amount <= 0.0005:
+        return
+    previous = float(operations['devices'].get(name, 0.0) or 0.0)
+    operations['devices'][str(name)] = min(maximum, previous + amount)
 
 
 def _dev_destroyed_set(mock):
-	s = getattr(mock, '_destroyed_devices', None)
-	if s is None:
-		s = set()
-		mock._destroyed_devices = s
-	return s
+    s = getattr(mock, '_destroyed_devices', None)
+    if s is None:
+        s = set()
+        mock._destroyed_devices = s
+    return s
 
 
 def _dev_critical_set(mock):
-	s = getattr(mock, '_critical_devices', None)
-	if s is None:
-		s = set()
-		mock._critical_devices = s
-	return s
+    s = getattr(mock, '_critical_devices', None)
+    if s is None:
+        s = set()
+        mock._critical_devices = s
+    return s
 
 
 def _module_ui_name(name):
-	'''Damage-panel device name = extra name minus 'Health'; tracks keep their side.
+    '''Damage-panel device name = extra name minus 'Health'; tracks keep their side.
 
-	The battle scope defines its own and publishes it over this one.'''
-	return name[:-6] if name.endswith('Health') else name
+    The battle scope defines its own and publishes it over this one.'''
+    return name[:-6] if name.endswith('Health') else name
 
 
 def _refresh_mobility_flags(mock):
-	# A destroyed track/engine is functional again only once auto-repair reaches
-	# ~50% (the repair tick drops it from the set), so gameplay keys off the
-	# destroyed-set rather than raw HP.
-	s = _dev_destroyed_set(mock)
-	mock.is_tracked = ('leftTrackHealth' in s) or ('rightTrackHealth' in s)
-	mock.is_engine_dead = ('engineHealth' in s)
-	mock.is_gun_destroyed = ('gunHealth' in s)
-	mock.is_turret_locked = ('turretRotatorHealth' in s)
+    # A destroyed track/engine is functional again only once auto-repair reaches
+    # ~50% (the repair tick drops it from the set), so gameplay keys off the
+    # destroyed-set rather than raw HP.
+    s = _dev_destroyed_set(mock)
+    mock.is_tracked = ('leftTrackHealth' in s) or ('rightTrackHealth' in s)
+    mock.is_engine_dead = ('engineHealth' in s)
+    mock.is_gun_destroyed = ('gunHealth' in s)
+    mock.is_turret_locked = ('turretRotatorHealth' in s)
 
 
 def _vehicle_identity(td):
-	'''Short "vehicle/chassis" label used only by bounded diagnostics.'''
-	name = _descriptor_value(td, 'name')
-	if name is None:
-		name = _descriptor_value(_descriptor_value(td, 'type'), 'name')
-	chassis = _descriptor_value(_descriptor_value(td, 'chassis'), 'name')
-	return '%s/%s' % (name, chassis)
+    '''Short "vehicle/chassis" label used only by bounded diagnostics.'''
+    name = _descriptor_value(td, 'name')
+    if name is None:
+        name = _descriptor_value(_descriptor_value(td, 'type'), 'name')
+    chassis = _descriptor_value(_descriptor_value(td, 'chassis'), 'name')
+    return '%s/%s' % (name, chassis)
 
 
 def _track_contact_point(contacts, component, distance):
-	'''Return the component-local contact recorded for one native hit.
+    '''Return the component-local contact recorded for one native hit.
 
-	The match is exact rather than heuristic: a hit's local point is a pure
-	function of its component-local ray and its native distance, so two
-	collisions sharing a component and a distance necessarily share one point.
-	Duplicate material identities, equal-distance boxes and an extended trace
-	(same origin, longer end) therefore cannot attach the wrong contact.'''
-	for record in contacts or ():
-		try:
-			record_component, record_distance, point = record
-		except (TypeError, ValueError):
-			continue
-		if str(record_component) != str(component):
-			continue
-		try:
-			if abs(float(record_distance) - float(distance)) > 1.0e-6:
-				continue
-		except (TypeError, ValueError, OverflowError):
-			continue
-		return point
-	return None
+    The match is exact rather than heuristic: a hit's local point is a pure
+    function of its component-local ray and its native distance, so two
+    collisions sharing a component and a distance necessarily share one point.
+    Duplicate material identities, equal-distance boxes and an extended trace
+    (same origin, longer end) therefore cannot attach the wrong contact.'''
+    for record in contacts or ():
+        try:
+            record_component, record_distance, point = record
+        except (TypeError, ValueError):
+            continue
+        if str(record_component) != str(component):
+            continue
+        try:
+            if abs(float(record_distance) - float(distance)) > 1.0e-6:
+                continue
+        except (TypeError, ValueError, OverflowError):
+            continue
+        return point
+    return None
 
 
 def _track_hp_loss(td, name, material, component, distance, contacts,
-		channel_roll, device_loss, shell):
-	'''Return (hp_loss, decision) for one solid direct hit on a track.
+        channel_roll, device_loss, shell):
+    '''Return (hp_loss, decision) for one solid direct hit on a track.
 
-	The live material's damageKind selects the shell damage channel - normal
-	#1513 track materials carry nonzero armour, so vehicles.py resolves their
-	"auto" kind to armour damage, index 0.  The chassis-local contact then
-	selects the zone: the leading and rearmost driving wheels take the full
-	roll, the ordinary middle run takes roll / bulkHealthFactor.
+    The live material's damageKind selects the shell damage channel - normal
+    #1513 track materials carry nonzero armour, so vehicles.py resolves their
+    "auto" kind to armour damage, index 0.  The chassis-local contact then
+    selects the zone: the leading and rearmost driving wheels take the full
+    roll, the ordinary middle run takes roll / bulkHealthFactor.
 
-	Any missing, malformed or impossible input keeps the previous
-	device-damage result for that one hit, reports at most one bounded
-	diagnostic, and never raises.'''
-	identity = _vehicle_identity(td)
-	if str(component) != _track_damage.TRACK_COMPONENT_NAME:
-		_track_damage.report(
-			('component', identity, str(component)),
-			'component=%s is not the chassis collision model; '
-			'keeping device damage (vehicle=%s)' % (component, identity))
-		return device_loss, None
-	# Resolve every non-random input before drawing a roll, so a fallback can
-	# never consume a shell-damage draw the old law would not have made.
-	bounds = _track_damage.wheel_zone_bounds(_descriptor_value(td, 'chassis'))
-	point = _track_contact_point(contacts, component, distance)
-	if bounds is None or point is None:
-		_track_damage.report(
-			('geometry', identity, name),
-			'driving-wheel geometry unavailable: vehicle=%s device=%s '
-			'bounds=%s contact=%s; keeping device damage'
-			% (identity, name, bounds, point is not None))
-		return device_loss, None
-	zone = _track_damage.classify_zone(
-		point[_track_damage.FORWARD_AXIS], bounds)
-	factor = None
-	if zone == _track_damage.ZONE_MIDDLE:
-		factor = _track_damage.bulk_health_factor(td)
-	scale = _track_damage.zone_damage_scale(zone, factor)
-	if scale is None:
-		_track_damage.report(
-			('scale', identity, name, zone),
-			'track zone scale unavailable: vehicle=%s device=%s zone=%s '
-			'bulk=%s; keeping device damage'
-			% (identity, name, zone, factor))
-		return device_loss, None
-	index = _track_damage.material_damage_index(material)
-	if index is None:
-		_track_damage.report(
-			('damagekind', identity, name),
-			'material damageKind unavailable: vehicle=%s device=%s; '
-			'keeping device damage' % (identity, name))
-		return device_loss, None
-	rolled = channel_roll(index)
-	if rolled is None:
-		_track_damage.report(
-			('channel', identity, name, index),
-			'shell damage channel %d unavailable: vehicle=%s device=%s; '
-			'keeping device damage' % (index, identity, name))
-		return device_loss, None
-	return rolled * scale, {
-		'identity': identity, 'zone': zone,
-		'local_z': point[_track_damage.FORWARD_AXIS],
-		'bounds': bounds, 'index': index, 'factor': factor,
-		'base': _device_damage.shell_damage_base(shell, index)}
+    Any missing, malformed or impossible input keeps the previous
+    device-damage result for that one hit, reports at most one bounded
+    diagnostic, and never raises.'''
+    identity = _vehicle_identity(td)
+    if str(component) != _track_damage.TRACK_COMPONENT_NAME:
+        _track_damage.report(
+            ('component', identity, str(component)),
+            'component=%s is not the chassis collision model; '
+            'keeping device damage (vehicle=%s)' % (component, identity))
+        return device_loss, None
+    # Resolve every non-random input before drawing a roll, so a fallback can
+    # never consume a shell-damage draw the old law would not have made.
+    bounds = _track_damage.wheel_zone_bounds(_descriptor_value(td, 'chassis'))
+    point = _track_contact_point(contacts, component, distance)
+    if bounds is None or point is None:
+        _track_damage.report(
+            ('geometry', identity, name),
+            'driving-wheel geometry unavailable: vehicle=%s device=%s '
+            'bounds=%s contact=%s; keeping device damage'
+            % (identity, name, bounds, point is not None))
+        return device_loss, None
+    zone = _track_damage.classify_zone(
+        point[_track_damage.FORWARD_AXIS], bounds)
+    factor = None
+    if zone == _track_damage.ZONE_MIDDLE:
+        factor = _track_damage.bulk_health_factor(td)
+    scale = _track_damage.zone_damage_scale(zone, factor)
+    if scale is None:
+        _track_damage.report(
+            ('scale', identity, name, zone),
+            'track zone scale unavailable: vehicle=%s device=%s zone=%s '
+            'bulk=%s; keeping device damage'
+            % (identity, name, zone, factor))
+        return device_loss, None
+    index = _track_damage.material_damage_index(material)
+    if index is None:
+        _track_damage.report(
+            ('damagekind', identity, name),
+            'material damageKind unavailable: vehicle=%s device=%s; '
+            'keeping device damage' % (identity, name))
+        return device_loss, None
+    rolled = channel_roll(index)
+    if rolled is None:
+        _track_damage.report(
+            ('channel', identity, name, index),
+            'shell damage channel %d unavailable: vehicle=%s device=%s; '
+            'keeping device damage' % (index, identity, name))
+        return device_loss, None
+    return rolled * scale, {
+        'identity': identity, 'zone': zone,
+        'local_z': point[_track_damage.FORWARD_AXIS],
+        'bounds': bounds, 'index': index, 'factor': factor,
+        'base': _device_damage.shell_damage_base(shell, index)}
 
 
 def _apply_module_damage(target_mock, all_hits, start_pos, end_pos, dmg, _shell,
-		attacker_id, penetrated=None, by_explosion=False, internal_hits=None,
-		distance_filters=True, deadeye=False, collision_contacts=None):
-	'''Roll module and crew crits for one strike.
+        attacker_id, penetrated=None, by_explosion=False, internal_hits=None,
+        distance_filters=True, deadeye=False, collision_contacts=None):
+    '''Roll module and crew crits for one strike.
 
-	penetrated: True the shell got through, False it did not, None unknown (the
-	bot call sites, which already sit behind their own penetration branch).
-	False restricts the roll to devices IN FRONT of the plate that stopped the
-	round - see the _stop_d block below.
+    penetrated: True the shell got through, False it did not, None unknown (the
+    bot call sites, which already sit behind their own penetration branch).
+    False restricts the roll to devices IN FRONT of the plate that stopped the
+    round - see the _stop_d block below.
 
-	by_explosion: this is HE splash rather than a solid hit, so every saving throw
-	reads the material's chanceToHitByExplosion. Blast reaches externally mounted
-	gear far more readily than it reaches anything behind a plate, which is what
-	the two separate XML values encode.
+    by_explosion: this is HE splash rather than a solid hit, so every saving throw
+    reads the material's chanceToHitByExplosion. Blast reaches externally mounted
+    gear far more readily than it reaches anything behind a plate, which is what
+    the two separate XML values encode.
 
-	internal_hits: a precomputed HE cone. None selects the ordinary solid-shell
-	ray; an empty tuple explicitly means the cone crossed no internal target.
-	distance_filters is disabled for that cone because its distances start at the
-	burst, while native collision distances start at the external trace origin.
-	deadeye adds the official three percentage points only to AP/APCR/HEAT.
+    internal_hits: a precomputed HE cone. None selects the ordinary solid-shell
+    ray; an empty tuple explicitly means the cone crossed no internal target.
+    distance_filters is disabled for that cone because its distances start at the
+    burst, while native collision distances start at the external trace origin.
+    deadeye adds the official three percentage points only to AP/APCR/HEAT.
 
-	collision_contacts: private (component, distance, local_point) evidence for
-	this exact strike, produced beside the native collisions themselves. Only
-	the track zone law reads it; without it a track hit keeps the previous
-	device-damage behaviour.'''
-	import BigWorld, Math, random
-	from gui.mods.offline_lan_0922 import device_damage as _device_damage
-	try:
-		from _constants import CONFIG_OPTIONS as _MDCFG
-	except Exception:
-		_MDCFG = {}
-	if not bool(_MDCFG.get('module_damage', True)):
-		return dmg
-	_crew_on = bool(_MDCFG.get('crew_damage', True))
-	_crew_hit = False
-	_pvid = getattr(BigWorld.player(), 'playerVehicleID', -1)
-	is_player_target = (getattr(target_mock, 'id', -1) == _pvid)
-	if is_player_target and not bool(_MDCFG.get('player_module_damage', True)):
-		return dmg
-	if getattr(target_mock, 'devices_hp', None) is None:
-		target_mock.devices_hp = {}
-	_critical_devices = _dev_critical_set(target_mock)
-	# Shells carry damage as (armor, devices); there is no 'deviceDamage' key.
-	# One roll per damage channel per strike: every ordinary device keeps
-	# sharing the single devices roll it has always shared, while a track
-	# material whose damageKind selects armour draws that channel once. The
-	# resolved hull damage is never reused as a track roll - a pure track hit
-	# legitimately deals zero hull damage but still needs a full track roll.
-	_channel_rolls = {}
+    collision_contacts: private (component, distance, local_point) evidence for
+    this exact strike, produced beside the native collisions themselves. Only
+    the track zone law reads it; without it a track hit keeps the previous
+    device-damage behaviour.'''
+    import BigWorld, Math, random
+    from gui.mods.offline_lan_0922 import device_damage as _device_damage
+    try:
+        from _constants import CONFIG_OPTIONS as _MDCFG
+    except Exception:
+        _MDCFG = {}
+    if not bool(_MDCFG.get('module_damage', True)):
+        return dmg
+    _crew_on = bool(_MDCFG.get('crew_damage', True))
+    _crew_hit = False
+    _pvid = getattr(BigWorld.player(), 'playerVehicleID', -1)
+    is_player_target = (getattr(target_mock, 'id', -1) == _pvid)
+    if is_player_target and not bool(_MDCFG.get('player_module_damage', True)):
+        return dmg
+    if getattr(target_mock, 'devices_hp', None) is None:
+        target_mock.devices_hp = {}
+    _critical_devices = _dev_critical_set(target_mock)
+    # Shells carry damage as (armor, devices); there is no 'deviceDamage' key.
+    # One roll per damage channel per strike: every ordinary device keeps
+    # sharing the single devices roll it has always shared, while a track
+    # material whose damageKind selects armour draws that channel once. The
+    # resolved hull damage is never reused as a track roll - a pure track hit
+    # legitimately deals zero hull damage but still needs a full track roll.
+    _channel_rolls = {}
 
-	def _channel_roll(index):
-		if index not in _channel_rolls:
-			_channel_rolls[index] = _device_damage.module_damage_roll(
-				_shell, index)
-		return _channel_rolls[index]
+    def _channel_roll(index):
+        if index not in _channel_rolls:
+            _channel_rolls[index] = _device_damage.module_damage_roll(
+                _shell, index)
+        return _channel_rolls[index]
 
-	_shell_dmg = _channel_roll(_track_damage.DEVICE_DAMAGE_INDEX)
-	if _shell_dmg is None:
-		_shell_dmg = dmg
-	_shell_kind = str(_descriptor_value(_shell, 'kind', '') or '')
-	_deadeye_bonus = (0.03 if deadeye and _shell_kind in (
-		'ARMOR_PIERCING', 'ARMOR_PIERCING_CR', 'HOLLOW_CHARGE') else 0.0)
-	is_player_attacker = (attacker_id == _pvid)
-	target_mock.last_sound = 'armor_pierced_by_player' if is_player_attacker else 'armor_pierced'
-	td = _device_td(target_mock)
-	# A shell that did NOT get through can only crit what sits IN FRONT of the plate
-	# that stopped it. The player's shot path calls this on every strike (so a pure
-	# track hit can still break a track, since tracks deal 0 structure damage), and
-	# without this window it also rolled the engine, fuel tank, crew and ammo bay
-	# deep inside the hull on a shot that visibly bounced. A destroyed ammo bay is
-	# an instant kill, so that read as a random ammo rack on a ricochet.
-	# Where the shell LEAVES the hull. The ray runs far past the tank, so the
-	# hit list also contains the far-side track on the way out - and a track
-	# material has chanceToHitByProjectile 1.0, so every penetrating hull hit
-	# broke a track that the shell never really reached. That is the "tracked
-	# out of nowhere when shooting the hull" report. A round is spent once it
-	# has crossed the far wall, so stop scoring after the SECOND structural
-	# plate: entry, interior, exit.
-	_exit_d = None
-	if distance_filters:
-		try:
-			_walls = 0
-			for _h1 in sorted(all_hits, key=lambda _x: _x[0]):
-				_m1 = _h1[2]
-				if _m1 is None:
-					continue
-				if getattr(_m1, 'vehicleDamageFactor', 1.0) != 0.0 and float(getattr(_m1, 'armor', 0.0) or 0.0) > 0.0:
-					_walls += 1
-					if _walls >= 2:
-						_exit_d = _h1[0]
-						break
-		except Exception:
-			_exit_d = None
-	_stop_d = None
-	if distance_filters and penetrated is False:
-		_stop_d = 1e9
-		for _h0 in all_hits:
-			try:
-				_hd0, _hm0 = _h0[0], _h0[2]
-			except Exception:
-				continue
-			if _hm0 is None:
-				continue
-			# structural = deals hull damage AND has thickness; that is the plate the
-			# penetration test was run against.
-			if getattr(_hm0, 'vehicleDamageFactor', 1.0) != 0.0 and float(getattr(_hm0, 'armor', 0.0) or 0.0) > 0.0:
-				if _hd0 < _stop_d:
-					_stop_d = _hd0
-	# PC component materials supply external contacts. Selected Console meshes
-	# (or explicitly retained authored profiles) supply interior contacts. A
-	# missing source must not fabricate a compartment hit.
-	_scored = all_hits
-	_real = None
-	_audit_saved = []
-	_audit_applied = []
-	_audit_rolls = []
-	_audit_crew = []
-	if (internal_hits is not None or penetrated is not False) and bool(
-			_MDCFG.get('internal_module_damage', True)):
-		try:
-			# Query the selected component-local geometry. Multiple reached
-			# pieces of one device produce one saving throw; distinct devices
-			# keep independent rolls.
-			_covered = set()
-			for _h2 in all_hits:
-				_m2 = _h2[2]
-				_x2 = getattr(_m2, 'extra', None) if _m2 is not None else None
-				if _x2 is not None:
-					_covered.add(str(getattr(_x2, 'name', '')))
-			_rost = _crew_roster(td)
-			if internal_hits is None:
-				_real = _offh_internal_ray_hits(
-					target_mock, td, start_pos, end_pos, _covered)
-			else:
-				_real = list(internal_hits)
-			if _real is not None:
-				if not _crew_on:
-					_real = [_r for _r in _real if _r[1][:-6] not in _rost]
-				if _real:
-					LOG_DEBUG('INTERIOR %s GEOMETRY: %s' % (
-						'EXPLOSION' if internal_hits is not None else 'RAY',
-						', '.join(['%s@%.2f' % (_n2, _d2)
-							for _d2, _n2 in _real])))
-					_scored = list(all_hits)
-					for _d2, _n2 in _real:
-						_scored.append((_d2, 1.0, _SynthMaterial(_n2), None))
-				else:
-					LOG_DEBUG('INTERIOR GEOMETRY: shell path crossed no interior box')
-			else:
-				# No per-tank profile means no reliable interior geometry. Do not
-				# manufacture a guaranteed compartment candidate and then apply a
-				# second chance roll; external/native device boxes are still scored.
-				LOG_DEBUG('INTERIOR GEOMETRY: unavailable; internal crit skipped')
-		except Exception as _ie:
-			LOG_DEBUG('interior roll err:', str(_ie))
-	# Re-entrant: HE splash scores other vehicles through this same function, so
-	# only the outermost strike owns the collector.
-	_own_burst = _OFFH_VOICE_BURST[0] is None
-	if _own_burst:
-		_OFFH_VOICE_BURST[0] = []
-	try:
-		_blocked = 0
-		_rolled_names = set()
-		for h in sorted(_scored, key=lambda _entry: _entry[0]):
-			h_dist, h_angle, h_mat, h_comp = h
-			if h_mat is None:
-				continue
-			_extra = getattr(h_mat, 'extra', None)
-			if _extra is None:
-				continue          # plain armour plate, nothing to crit
-			# NO vehicleDamageFactor filter here. It used to drop every device material
-			# whose plate ALSO damages the hull, on the theory that those were armour
-			# rather than gear. The shipped data says otherwise: engine, ammo bay, fuel
-			# tank, radio, turret ring and gunBreech all carry vehicleDamageFactor 1.0
-			# and WG crits every one of them. Of those, only gunBreech has geometry in
-			# this client (37 vehicles), so the filter's real effect was that a shell
-			# through the breech could not damage the gun. vehicleDamageFactor governs
-			# how much of the round goes into the HULL, which the penetration path
-			# already owns; it says nothing about whether a crit may happen.
-			_name = getattr(_extra, 'name', 'Unknown')
-			if _stop_d is not None and h_dist > _stop_d:
-				_blocked += 1
-				continue          # behind the plate that stopped the shell
-			if _exit_d is not None and h_dist > _exit_d:
-				_blocked += 1
-				continue          # the shell has left the tank - exit-side track, not a hit
-			# Chance source, so the log answers whether the era fallback table is ever
-			# reached. MaterialInfo always carries chanceToHitByProjectile (vehicles.py
-			# _readArmor copies it from g_cache.commonConfig), so 'FALLBACK' here means
-			# the material object itself is not what we think it is.
-			_live_c = getattr(h_mat, 'chanceToHitByExplosion' if by_explosion else 'chanceToHitByProjectile', None)
-			LOG_DEBUG('CRIT ROLL: %s chance=%s src=%s%s' % (_name, _live_c, 'mat' if _live_c is not None else 'FALLBACK', ' splash' if by_explosion else ''))
-			if _name in _device_damage.CREW_HEALTH_NAMES:
-				if _name in _rolled_names:
-					continue
-				_rolled_names.add(_name)
-				_chance = min(1.0, _device_damage.saving_throw(
-					h_mat, _name, by_explosion) + _deadeye_bonus)
-				# #1513 stores 0.30 for the advertised 15% large-medkit
-				# protection. Apply the artefact value at the crew-hit roll.
-				_chance *= max(
-					0.0, 1.0 - 0.5 * _medkit_bonus_value(target_mock))
-				_draw = random.random() if _crew_on else None
-				_audit_rolls.append((_name, _chance, _draw))
-				if _crew_on and _draw < _chance:
-					_record_proposal_crew_damage(target_mock, _name[:-6])
-					_knocked_out = _knock_out_crew(target_mock, _name[:-6], is_player_target)
-					_audit_crew.append((_name, 'proposed' if getattr(
-						target_mock, '_offline_proposal_only', False) else
-						('knocked_out' if _knocked_out else 'unchanged')))
-					if _knocked_out:
-						_crew_hit = True
-						target_mock.last_sound = 'armor_pierced_crit_by_player' if is_player_attacker else 'armor_pierced_crit'
-				else:
-					_audit_crew.append((_name, 'saved' if _crew_on else 'disabled'))
-				continue
-			# INCLUSION list: only real, modelled devices are scored. The old exclusion
-			# list ('everything except tracks and gun') both credited unmodelled extras
-			# AND made track/gun crits impossible.
-			if _name not in _device_damage._DEVICE_HP_SPEC:
-				continue
-			if _name in _rolled_names:
-				continue
-			_rolled_names.add(_name)
-			_chance = min(1.0, _device_damage.saving_throw(
-				h_mat, _name, by_explosion) + _deadeye_bonus)
-			_draw = random.random()
-			_audit_rolls.append((_name, _chance, _draw))
-			if _draw >= _chance:
-				_audit_saved.append(_name)
-				continue   # saving throw failed: no crit on this device
-			max_hp = _device_damage.device_max_hp(td, _name)
-			if max_hp is None:
-				max_hp = 100
-			# Update 6.4 split the track into leading/rearmost driving wheels
-			# and an ordinary middle run. Solid direct hits only: HE direct and
-			# splash stay on the previous device-damage law until the same
-			# evidence covers them.
-			_loss = _shell_dmg
-			_track_decision = None
-			if _name in _track_damage.TRACK_DEVICE_NAMES and not by_explosion:
-				_loss, _track_decision = _track_hp_loss(
-					td, _name, h_mat, h_comp, h_dist, collision_contacts,
-					_channel_roll, _shell_dmg, _shell)
-			_record_proposal_device_damage(
-				target_mock, _name, _loss, max_hp)
-			previous_hp = target_mock.devices_hp.get(_name, max_hp)
-			current_hp = _device_damage.damaged_hp(
-				previous_hp, _loss, _name in _dev_destroyed_set(target_mock))
-			target_mock.devices_hp[_name] = current_hp
-			_audit_applied.append((_name, round(float(_loss), 3)))
-			if _track_decision is not None:
-				# Bounded to one line per target, side and zone, so a Windows
-				# check can read all three zones without per-shot spam.
-				_track_damage.report(
-					('zone', getattr(target_mock, 'id', '?'), _name,
-						_track_decision['zone']),
-					'zone target=%s vehicle=%s device=%s z=%.3f '
-					'front>=%.3f rear<=%.3f zone=%s damageKind=%d base=%s '
-					'bulk=%s loss=%.1f hp=%.1f->%.1f' % (
-						getattr(target_mock, 'id', '?'),
-						_track_decision['identity'], _name,
-						_track_decision['local_z'],
-						_track_decision['bounds'][0],
-						_track_decision['bounds'][1],
-						_track_decision['zone'], _track_decision['index'],
-						_track_decision['base'], _track_decision['factor'],
-						_loss, previous_hp, current_hp))
-			_destroyed_devices = _dev_destroyed_set(target_mock)
-			if current_hp <= 0:
-				_destroyed_devices.add(_name)
-				_critical_devices.discard(_name)
-			elif (_name in _critical_devices or
-					_device_damage.device_state(current_hp, max_hp) == 'critical'):
-				_critical_devices.add(_name)
-			else:
-				_critical_devices.discard(_name)
-			target_mock.last_sound = 'armor_pierced_crit_by_player' if is_player_attacker else 'armor_pierced_crit'
-			_push_device_ui(target_mock, is_player_target, _name, current_hp, max_hp)
-			if 'ammo' in _name.lower() and current_hp <= 0 and is_player_target and _offh_module_test_mode():
-				# Test bench: the rack still reads destroyed on the panel and can be
-				# repaired, it just does not end the run.
-				LOG_DEBUG('MODULE TEST: ammo rack detonation on the player suppressed')
-			elif 'ammo' in _name.lower() and current_hp <= 0:
-				# A detonated ammo rack destroys the tank outright - the era rule, not a roll.
-				LOG_DEBUG('AMMO RACK DETONATION: target=%s penetrated=%s hp_was=%s shell_dev_dmg=%.0f' % (
-					getattr(target_mock, 'id', '?'), penetrated, max_hp, _shell_dmg))
-				dmg = target_mock.health + 10
-				target_mock._is_killed = True
-				target_mock._ammo_rack_death = True   # picks the 'explosion' death effect
-				target_mock.last_sound = 'enemy_killed_by_player' if is_player_attacker else 'enemy_killed'
-				try:
-					if not getattr(target_mock, '_offline_proposal_only', False):
-						BigWorld.player().arena.onVehicleKilled(target_mock.id, attacker_id, 1)
-				except Exception:
-					pass
-				break
-			if current_hp <= 0:
-				_refresh_mobility_flags(target_mock)
-				# Opening frame at 0%, so the bar appears the instant the module breaks
-				# instead of only on the next repair tick - but not when this very shot is
-				# killing the tank, or the panel starts a repair on a wreck.
-				if (is_player_target and not getattr(target_mock, '_offline_proposal_only', False) and not getattr(target_mock, '_is_killed', False)) and (getattr(target_mock, 'health', 0) or 0) > 0:
-					try:
-						import gui.WindowsManager as _WMrb
-						_bwrb = getattr(_WMrb.g_windowsManager, 'battleWindow', None)
-						if _bwrb is not None and hasattr(_bwrb, 'damagePanel'):
-							from gui.mods.offline_lan_0922 import device_damage as _DDrb
-							_secs0 = _DDrb.repair_seconds(_name, td)
-							_bwrb.damagePanel.updateModuleRepair(_module_ui_name(_name), 0, _secs0)
-					except Exception: pass
-			# The fuel tank starts a fire only when this successful hit reduces it to
-			# zero. Engine fire is independent of the yellow/red state threshold, but
-			# common/vehicle.xml still requires the rolled device damage to reach
-			# miscParams/minFireStartingDamage before fireStartingChance is rolled.
-			_hp_lost = current_hp < previous_hp
-			if (_hp_lost and current_hp <= 0 and
-					'fuel' in _name.lower() and
-					not getattr(target_mock, 'is_on_fire', False)):
-				_offh_ignite(target_mock, is_player_target, _name + ' destroyed')
-			elif (_hp_lost and 'engine' in _name.lower() and
-					not getattr(target_mock, 'is_on_fire', False)):
-				_fsc = 0.15
-				_min_fire_damage = _device_damage.MIN_FIRE_STARTING_DAMAGE
-				try:
-					_eng = getattr(td, 'engine', None)
-					if _eng is not None:
-						_fsc = float(_descriptor_value(
-							_eng, 'fireStartingChance', 0.15))
-						_min_fire_damage = float(_descriptor_value(
-							_eng, 'minFireStartingDamage',
-							_device_damage.MIN_FIRE_STARTING_DAMAGE))
-				except Exception:
-					pass
-				_fsc *= _fire_starting_chance_factor(target_mock)
-				if (_shell_dmg >= max(0.0, _min_fire_damage) and
-						_fsc > 0.0 and random.random() < _fsc):
-					_offh_ignite(target_mock, is_player_target,
-						_name + ' damaged')
-		if _blocked:
-			LOG_DEBUG('CRIT GATE: %d device hit(s) behind the stopping plate ignored (no penetration)' % _blocked)
-		# One compact witness for edited high-damage rounds, without enabling
-		# the old per-triangle/per-roll debug stream for every Bot shell.
-		if _shell_dmg >= 1000.0:
-			print('[Offline LAN 0.9.22] MODULE strike target=%s vehicle=%s shell=%s damage=%s roll=%.3f penetrated=%s interior=%s exit=%s stop=%s blocked=%s rolled=%s saved=%s applied=%s chances=%s crew=%s attacker=%s' % (
-				getattr(target_mock, 'id', '?'), getattr(getattr(td, 'type', None), 'name', '?'),
-				_shell_kind, _descriptor_value(_shell, 'damage', None), _shell_dmg,
-				penetrated, _real, _exit_d, _stop_d, _blocked,
-				sorted(_rolled_names), _audit_saved, _audit_applied,
-				_audit_rolls, _audit_crew, attacker_id))
-	finally:
-		if _own_burst:
-			_pending_voice = _OFFH_VOICE_BURST[0] or []
-			_OFFH_VOICE_BURST[0] = None
-			if len(_pending_voice) > 1:
-				LOG_DEBUG('CREWVOICE burst: %d reports from one strike, announcing the worst of %s'
-					% (len(_pending_voice), _pending_voice))
-			if _pending_voice:
-				_offh_play_crit_voice(_offh_voice_burst_pick(_pending_voice))
-	return dmg
+    _shell_dmg = _channel_roll(_track_damage.DEVICE_DAMAGE_INDEX)
+    if _shell_dmg is None:
+        _shell_dmg = dmg
+    _shell_kind = str(_descriptor_value(_shell, 'kind', '') or '')
+    _deadeye_bonus = (0.03 if deadeye and _shell_kind in (
+        'ARMOR_PIERCING', 'ARMOR_PIERCING_CR', 'HOLLOW_CHARGE') else 0.0)
+    is_player_attacker = (attacker_id == _pvid)
+    target_mock.last_sound = 'armor_pierced_by_player' if is_player_attacker else 'armor_pierced'
+    td = _device_td(target_mock)
+    # A shell that did NOT get through can only crit what sits IN FRONT of the plate
+    # that stopped it. The player's shot path calls this on every strike (so a pure
+    # track hit can still break a track, since tracks deal 0 structure damage), and
+    # without this window it also rolled the engine, fuel tank, crew and ammo bay
+    # deep inside the hull on a shot that visibly bounced. A destroyed ammo bay is
+    # an instant kill, so that read as a random ammo rack on a ricochet.
+    # Where the shell LEAVES the hull. The ray runs far past the tank, so the
+    # hit list also contains the far-side track on the way out - and a track
+    # material has chanceToHitByProjectile 1.0, so every penetrating hull hit
+    # broke a track that the shell never really reached. That is the "tracked
+    # out of nowhere when shooting the hull" report. A round is spent once it
+    # has crossed the far wall, so stop scoring after the SECOND structural
+    # plate: entry, interior, exit.
+    _exit_d = None
+    if distance_filters:
+        try:
+            _walls = 0
+            for _h1 in sorted(all_hits, key=lambda _x: _x[0]):
+                _m1 = _h1[2]
+                if _m1 is None:
+                    continue
+                if getattr(_m1, 'vehicleDamageFactor', 1.0) != 0.0 and float(getattr(_m1, 'armor', 0.0) or 0.0) > 0.0:
+                    _walls += 1
+                    if _walls >= 2:
+                        _exit_d = _h1[0]
+                        break
+        except Exception:
+            _exit_d = None
+    _stop_d = None
+    if distance_filters and penetrated is False:
+        _stop_d = 1e9
+        for _h0 in all_hits:
+            try:
+                _hd0, _hm0 = _h0[0], _h0[2]
+            except Exception:
+                continue
+            if _hm0 is None:
+                continue
+            # structural = deals hull damage AND has thickness; that is the plate the
+            # penetration test was run against.
+            if getattr(_hm0, 'vehicleDamageFactor', 1.0) != 0.0 and float(getattr(_hm0, 'armor', 0.0) or 0.0) > 0.0:
+                if _hd0 < _stop_d:
+                    _stop_d = _hd0
+    # PC component materials supply external contacts. Selected Console meshes
+    # (or explicitly retained authored profiles) supply interior contacts. A
+    # missing source must not fabricate a compartment hit.
+    _scored = all_hits
+    _real = None
+    _audit_saved = []
+    _audit_applied = []
+    _audit_rolls = []
+    _audit_crew = []
+    if (internal_hits is not None or penetrated is not False) and bool(
+            _MDCFG.get('internal_module_damage', True)):
+        try:
+            # Query the selected component-local geometry. Multiple reached
+            # pieces of one device produce one saving throw; distinct devices
+            # keep independent rolls.
+            _covered = set()
+            for _h2 in all_hits:
+                _m2 = _h2[2]
+                _x2 = getattr(_m2, 'extra', None) if _m2 is not None else None
+                if _x2 is not None:
+                    _covered.add(str(getattr(_x2, 'name', '')))
+            _rost = _crew_roster(td)
+            if internal_hits is None:
+                _real = _offh_internal_ray_hits(
+                    target_mock, td, start_pos, end_pos, _covered)
+            else:
+                _real = list(internal_hits)
+            if _real is not None:
+                if not _crew_on:
+                    _real = [_r for _r in _real if _r[1][:-6] not in _rost]
+                if _real:
+                    LOG_DEBUG('INTERIOR %s GEOMETRY: %s' % (
+                        'EXPLOSION' if internal_hits is not None else 'RAY',
+                        ', '.join(['%s@%.2f' % (_n2, _d2)
+                            for _d2, _n2 in _real])))
+                    _scored = list(all_hits)
+                    for _d2, _n2 in _real:
+                        _scored.append((_d2, 1.0, _SynthMaterial(_n2), None))
+                else:
+                    LOG_DEBUG('INTERIOR GEOMETRY: shell path crossed no interior box')
+            else:
+                # No per-tank profile means no reliable interior geometry. Do not
+                # manufacture a guaranteed compartment candidate and then apply a
+                # second chance roll; external/native device boxes are still scored.
+                LOG_DEBUG('INTERIOR GEOMETRY: unavailable; internal crit skipped')
+        except Exception as _ie:
+            LOG_DEBUG('interior roll err:', str(_ie))
+    # Re-entrant: HE splash scores other vehicles through this same function, so
+    # only the outermost strike owns the collector.
+    _own_burst = _OFFH_VOICE_BURST[0] is None
+    if _own_burst:
+        _OFFH_VOICE_BURST[0] = []
+    try:
+        _blocked = 0
+        _rolled_names = set()
+        for h in sorted(_scored, key=lambda _entry: _entry[0]):
+            h_dist, h_angle, h_mat, h_comp = h
+            if h_mat is None:
+                continue
+            _extra = getattr(h_mat, 'extra', None)
+            if _extra is None:
+                continue          # plain armour plate, nothing to crit
+            # NO vehicleDamageFactor filter here. It used to drop every device material
+            # whose plate ALSO damages the hull, on the theory that those were armour
+            # rather than gear. The shipped data says otherwise: engine, ammo bay, fuel
+            # tank, radio, turret ring and gunBreech all carry vehicleDamageFactor 1.0
+            # and WG crits every one of them. Of those, only gunBreech has geometry in
+            # this client (37 vehicles), so the filter's real effect was that a shell
+            # through the breech could not damage the gun. vehicleDamageFactor governs
+            # how much of the round goes into the HULL, which the penetration path
+            # already owns; it says nothing about whether a crit may happen.
+            _name = getattr(_extra, 'name', 'Unknown')
+            if _stop_d is not None and h_dist > _stop_d:
+                _blocked += 1
+                continue          # behind the plate that stopped the shell
+            if _exit_d is not None and h_dist > _exit_d:
+                _blocked += 1
+                continue          # the shell has left the tank - exit-side track, not a hit
+            # Chance source, so the log answers whether the era fallback table is ever
+            # reached. MaterialInfo always carries chanceToHitByProjectile (vehicles.py
+            # _readArmor copies it from g_cache.commonConfig), so 'FALLBACK' here means
+            # the material object itself is not what we think it is.
+            _live_c = getattr(h_mat, 'chanceToHitByExplosion' if by_explosion else 'chanceToHitByProjectile', None)
+            LOG_DEBUG('CRIT ROLL: %s chance=%s src=%s%s' % (_name, _live_c, 'mat' if _live_c is not None else 'FALLBACK', ' splash' if by_explosion else ''))
+            if _name in _device_damage.CREW_HEALTH_NAMES:
+                if _name in _rolled_names:
+                    continue
+                _rolled_names.add(_name)
+                _chance = min(1.0, _device_damage.saving_throw(
+                    h_mat, _name, by_explosion) + _deadeye_bonus)
+                # #1513 stores 0.30 for the advertised 15% large-medkit
+                # protection. Apply the artefact value at the crew-hit roll.
+                _chance *= max(
+                    0.0, 1.0 - 0.5 * _medkit_bonus_value(target_mock))
+                _draw = random.random() if _crew_on else None
+                _audit_rolls.append((_name, _chance, _draw))
+                if _crew_on and _draw < _chance:
+                    _record_proposal_crew_damage(target_mock, _name[:-6])
+                    _knocked_out = _knock_out_crew(target_mock, _name[:-6], is_player_target)
+                    _audit_crew.append((_name, 'proposed' if getattr(
+                        target_mock, '_offline_proposal_only', False) else
+                        ('knocked_out' if _knocked_out else 'unchanged')))
+                    if _knocked_out:
+                        _crew_hit = True
+                        target_mock.last_sound = 'armor_pierced_crit_by_player' if is_player_attacker else 'armor_pierced_crit'
+                else:
+                    _audit_crew.append((_name, 'saved' if _crew_on else 'disabled'))
+                continue
+            # INCLUSION list: only real, modelled devices are scored. The old exclusion
+            # list ('everything except tracks and gun') both credited unmodelled extras
+            # AND made track/gun crits impossible.
+            if _name not in _device_damage._DEVICE_HP_SPEC:
+                continue
+            if _name in _rolled_names:
+                continue
+            _rolled_names.add(_name)
+            _chance = min(1.0, _device_damage.saving_throw(
+                h_mat, _name, by_explosion) + _deadeye_bonus)
+            _draw = random.random()
+            _audit_rolls.append((_name, _chance, _draw))
+            if _draw >= _chance:
+                _audit_saved.append(_name)
+                continue   # saving throw failed: no crit on this device
+            max_hp = _device_damage.device_max_hp(td, _name)
+            if max_hp is None:
+                max_hp = 100
+            # Update 6.4 split the track into leading/rearmost driving wheels
+            # and an ordinary middle run. Solid direct hits only: HE direct and
+            # splash stay on the previous device-damage law until the same
+            # evidence covers them.
+            _loss = _shell_dmg
+            _track_decision = None
+            if _name in _track_damage.TRACK_DEVICE_NAMES and not by_explosion:
+                _loss, _track_decision = _track_hp_loss(
+                    td, _name, h_mat, h_comp, h_dist, collision_contacts,
+                    _channel_roll, _shell_dmg, _shell)
+            _record_proposal_device_damage(
+                target_mock, _name, _loss, max_hp)
+            previous_hp = target_mock.devices_hp.get(_name, max_hp)
+            current_hp = _device_damage.damaged_hp(
+                previous_hp, _loss, _name in _dev_destroyed_set(target_mock))
+            target_mock.devices_hp[_name] = current_hp
+            _audit_applied.append((_name, round(float(_loss), 3)))
+            if _track_decision is not None:
+                # Bounded to one line per target, side and zone, so a Windows
+                # check can read all three zones without per-shot spam.
+                _track_damage.report(
+                    ('zone', getattr(target_mock, 'id', '?'), _name,
+                        _track_decision['zone']),
+                    'zone target=%s vehicle=%s device=%s z=%.3f '
+                    'front>=%.3f rear<=%.3f zone=%s damageKind=%d base=%s '
+                    'bulk=%s loss=%.1f hp=%.1f->%.1f' % (
+                        getattr(target_mock, 'id', '?'),
+                        _track_decision['identity'], _name,
+                        _track_decision['local_z'],
+                        _track_decision['bounds'][0],
+                        _track_decision['bounds'][1],
+                        _track_decision['zone'], _track_decision['index'],
+                        _track_decision['base'], _track_decision['factor'],
+                        _loss, previous_hp, current_hp))
+            _destroyed_devices = _dev_destroyed_set(target_mock)
+            if current_hp <= 0:
+                _destroyed_devices.add(_name)
+                _critical_devices.discard(_name)
+            elif (_name in _critical_devices or
+                    _device_damage.device_state(current_hp, max_hp) == 'critical'):
+                _critical_devices.add(_name)
+            else:
+                _critical_devices.discard(_name)
+            target_mock.last_sound = 'armor_pierced_crit_by_player' if is_player_attacker else 'armor_pierced_crit'
+            _push_device_ui(target_mock, is_player_target, _name, current_hp, max_hp)
+            if 'ammo' in _name.lower() and current_hp <= 0 and is_player_target and _offh_module_test_mode():
+                # Test bench: the rack still reads destroyed on the panel and can be
+                # repaired, it just does not end the run.
+                LOG_DEBUG('MODULE TEST: ammo rack detonation on the player suppressed')
+            elif 'ammo' in _name.lower() and current_hp <= 0:
+                # A detonated ammo rack destroys the tank outright - the era rule, not a roll.
+                LOG_DEBUG('AMMO RACK DETONATION: target=%s penetrated=%s hp_was=%s shell_dev_dmg=%.0f' % (
+                    getattr(target_mock, 'id', '?'), penetrated, max_hp, _shell_dmg))
+                dmg = target_mock.health + 10
+                target_mock._is_killed = True
+                target_mock._ammo_rack_death = True   # picks the 'explosion' death effect
+                target_mock.last_sound = 'enemy_killed_by_player' if is_player_attacker else 'enemy_killed'
+                try:
+                    if not getattr(target_mock, '_offline_proposal_only', False):
+                        BigWorld.player().arena.onVehicleKilled(target_mock.id, attacker_id, 1)
+                except Exception:
+                    pass
+                break
+            if current_hp <= 0:
+                _refresh_mobility_flags(target_mock)
+                # Opening frame at 0%, so the bar appears the instant the module breaks
+                # instead of only on the next repair tick - but not when this very shot is
+                # killing the tank, or the panel starts a repair on a wreck.
+                if (is_player_target and not getattr(target_mock, '_offline_proposal_only', False) and not getattr(target_mock, '_is_killed', False)) and (getattr(target_mock, 'health', 0) or 0) > 0:
+                    try:
+                        import gui.WindowsManager as _WMrb
+                        _bwrb = getattr(_WMrb.g_windowsManager, 'battleWindow', None)
+                        if _bwrb is not None and hasattr(_bwrb, 'damagePanel'):
+                            from gui.mods.offline_lan_0922 import device_damage as _DDrb
+                            _secs0 = _DDrb.repair_seconds(_name, td)
+                            _bwrb.damagePanel.updateModuleRepair(_module_ui_name(_name), 0, _secs0)
+                    except Exception: pass
+            # The fuel tank starts a fire only when this successful hit reduces it to
+            # zero. Engine fire is independent of the yellow/red state threshold, but
+            # common/vehicle.xml still requires the rolled device damage to reach
+            # miscParams/minFireStartingDamage before fireStartingChance is rolled.
+            _hp_lost = current_hp < previous_hp
+            if (_hp_lost and current_hp <= 0 and
+                    'fuel' in _name.lower() and
+                    not getattr(target_mock, 'is_on_fire', False)):
+                _offh_ignite(target_mock, is_player_target, _name + ' destroyed')
+            elif (_hp_lost and 'engine' in _name.lower() and
+                    not getattr(target_mock, 'is_on_fire', False)):
+                _fsc = 0.15
+                _min_fire_damage = _device_damage.MIN_FIRE_STARTING_DAMAGE
+                try:
+                    _eng = getattr(td, 'engine', None)
+                    if _eng is not None:
+                        _fsc = float(_descriptor_value(
+                            _eng, 'fireStartingChance', 0.15))
+                        _min_fire_damage = float(_descriptor_value(
+                            _eng, 'minFireStartingDamage',
+                            _device_damage.MIN_FIRE_STARTING_DAMAGE))
+                except Exception:
+                    pass
+                _fsc *= _fire_starting_chance_factor(target_mock)
+                if (_shell_dmg >= max(0.0, _min_fire_damage) and
+                        _fsc > 0.0 and random.random() < _fsc):
+                    _offh_ignite(target_mock, is_player_target,
+                        _name + ' damaged')
+        if _blocked:
+            LOG_DEBUG('CRIT GATE: %d device hit(s) behind the stopping plate ignored (no penetration)' % _blocked)
+        # One compact witness for edited high-damage rounds, without enabling
+        # the old per-triangle/per-roll debug stream for every Bot shell.
+        if _shell_dmg >= 1000.0:
+            print('[Offline LAN 0.9.22] MODULE strike target=%s vehicle=%s shell=%s damage=%s roll=%.3f penetrated=%s interior=%s exit=%s stop=%s blocked=%s rolled=%s saved=%s applied=%s chances=%s crew=%s attacker=%s' % (
+                getattr(target_mock, 'id', '?'), getattr(getattr(td, 'type', None), 'name', '?'),
+                _shell_kind, _descriptor_value(_shell, 'damage', None), _shell_dmg,
+                penetrated, _real, _exit_d, _stop_d, _blocked,
+                sorted(_rolled_names), _audit_saved, _audit_applied,
+                _audit_rolls, _audit_crew, attacker_id))
+    finally:
+        if _own_burst:
+            _pending_voice = _OFFH_VOICE_BURST[0] or []
+            _OFFH_VOICE_BURST[0] = None
+            if len(_pending_voice) > 1:
+                LOG_DEBUG('CREWVOICE burst: %d reports from one strike, announcing the worst of %s'
+                    % (len(_pending_voice), _pending_voice))
+            if _pending_voice:
+                _offh_play_crit_voice(_offh_voice_burst_pick(_pending_voice))
+    return dmg
 
 def _state(vehicle):
     devices = dict(getattr(vehicle, 'devices_hp', None) or {})
@@ -1811,21 +1811,21 @@ def tick_fire(vehicle, dt, now=None, module_test_mode=False):
 
 
 def apply_drowning(vehicle):
-	"""Apply the copied all-module/all-crew drowning knockout law."""
-	if vehicle is None:
-		return None
-	before = _state(vehicle)
-	_offh_knock_out_everything(vehicle)
-	after = _state(vehicle)
-	return _payload(
-		before, after, getattr(vehicle, 'typeDescriptor', None), 'drowning')
+    """Apply the copied all-module/all-crew drowning knockout law."""
+    if vehicle is None:
+        return None
+    before = _state(vehicle)
+    _offh_knock_out_everything(vehicle)
+    after = _state(vehicle)
+    return _payload(
+        before, after, getattr(vehicle, 'typeDescriptor', None), 'drowning')
 
 
 def propose_drowning(vehicle):
-	"""Return the drowning terminal state without mutating a live Vehicle."""
-	if vehicle is None:
-		raise ValueError('critical proposal requires a vehicle')
-	return apply_drowning(_CriticalProposalVehicle(vehicle))
+    """Return the drowning terminal state without mutating a live Vehicle."""
+    if vehicle is None:
+        raise ValueError('critical proposal requires a vehicle')
+    return apply_drowning(_CriticalProposalVehicle(vehicle))
 
 
 def apply_death(vehicle, cause='shot'):

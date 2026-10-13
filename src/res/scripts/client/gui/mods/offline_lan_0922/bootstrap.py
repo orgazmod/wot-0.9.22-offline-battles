@@ -5,6 +5,57 @@ import os
 import sys
 import time
 
+# === offline log filter =================================================
+# Drop the mod's diagnostic chatter before it reaches python.log.
+_SILENCE_PREFIXES = (
+    '[BOT MOTION]',
+    '[BOT FLIP]',
+    '[BOT STALL]',
+    '[BOT STATE]',
+    '[BOT TACTICS]',
+    '[SPG FIRE GATE]',
+    '[Offline LAN 0.9.22]',
+)
+
+
+class _OfflineLogFilter(object):
+    def __init__(self, wrapped):
+        self._wrapped = wrapped
+        self._pending_newline = False
+
+    def _silences(self, data):
+        for prefix in _SILENCE_PREFIXES:
+            if prefix in data:
+                return True
+        return False
+
+    def write(self, data):
+        if not data:
+            return
+        if self._pending_newline:
+            self._pending_newline = False
+            if data == '\n' or data == '\r\n':
+                return
+        if self._silences(data):
+            if not data.endswith('\n'):
+                self._pending_newline = True
+            return
+        return self._wrapped.write(data)
+
+    def flush(self):
+        return self._wrapped.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped, name)
+
+
+try:
+    if not isinstance(sys.stdout, _OfflineLogFilter):
+        sys.stdout = _OfflineLogFilter(sys.stdout)
+except Exception:
+    pass
+# === end offline log filter =============================================
+
 import BigWorld
 
 from gui.mods.offline_lan_0922.compat import g_compatibility
@@ -46,15 +97,6 @@ _player_ready_signaled = False
 OFFLINE_ARTEFACT_STOCK = 200
 _store = None
 _postbattle_store = None
-
-
-
-
-
-
-
-
-
 
 def _schedule(delay, function):
     """Retire the handle before running it; it is no longer cancellable."""
