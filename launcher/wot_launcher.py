@@ -12,6 +12,32 @@ import subprocess
 import sys
 import threading
 import time
+import json
+
+def _ensure_bot_config():
+    appdata = os.environ.get('APPDATA')
+    if not appdata:
+        return
+    config_dir = os.path.join(appdata, 'Wargaming.net', 'WorldOfTanks', 'offline_lan_0922')
+    config_path = os.path.join(config_dir, 'bot_config.json')
+    
+    if not os.path.exists(config_path):
+        os.makedirs(config_dir, exist_ok=True)
+        default_config = {
+          "_комментарий": "large = как в оригинале, small = обычные, none = без расходника",
+          "consumable_reaction_seconds": 4.0,
+          "extinguisher": "large",
+          "medkit": "large",
+          "repairkit": "large",
+          "freeze_bots": False
+        }
+        try:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(default_config, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
+_ensure_bot_config()
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
